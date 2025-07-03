@@ -111,82 +111,123 @@ stage1_summary
 ```
 
 # Plot
+
 ```{r}
-create_spline_plots <- function(results, ipd_data, ncol=3) {
-  # Plot 1: Age splines by study
-  age_plot_data <- tibble()
-  
-  for (result in results) {
-    study_id <- result$study
-    study_data <- results[[study_id]]$data
-    age_model <- results[[study_id]]$models[["Age"]]
-    
-    # Generate smooth predictions
-    age_range <- seq(min(study_data$Age), max(study_data$Age), length.out = 100)
-    pred_data <- tibble(Age=age_range)
-    predictions <- predict(age_model$model, newdata = pred_data)
-    
-    age_plot_data <- bind_rows(age_plot_data, tibble(
-      study = study_id,
-      Age = age_range,
-      predicted_Y = predictions
-    ))
+create_single_spline_plot <- function(results, ipd_data, pred, ncol = 3) {
+  residuals_data <- tibble()
+  plots <- list()
+
+  # Get variable names from the formula string
+  vars <- unique(unlist(str_split(pred, "\\+|\\*|:")))
+  vars <- trimws(vars)
+
+  for (var_to_vary in vars) {
+    spline_data <- tibble()
+
+    for (result in results) {
+      study_id <- result$study
+      study_data <- results[[study_id]]$data
+      model_info <- results[[study_id]]$models[[pred]]
+      model <- model_info$model
+
+      # Build prediction data: vary var_to_vary, fix others
+      pred_range <- seq(min(study_data[[var_to_vary]]), max(study_data[[var_to_vary]]), length.out = 100)
+
+      # Get all variables in the model (excluding response)
+      predictors <- all.vars(formula(model))[-1]
+
+      # Build newdata
+      new_data <- map_dfc(predictors, function(var) {
+        if (var == var_to_vary) {
+          tibble(!!var := pred_range)
+        } else {
+          tibble(!!var := mean(study_data[[var]], na.rm = TRUE))
+        }
+      })
+
+      predictions <- predict(model, newdata = new_data)
+
+      spline_data <- bind_rows(spline_data, tibble(
+        study = study_id,
+        x = pred_range,
+        predicted_Y = predictions
+      ))
+
+      # Collect residuals
+      residuals_data <- bind_rows(residuals_data, tibble(
+        study = study_id,
+        fitted = model_info$fitted_values,
+        residuals = model_info$residuals
+      ))
+    }
+
+    # Spline plot for this var_to_vary
+    spline_plot <- ggplot() +
+      geom_point(data = ipd_data, aes_string(x = var_to_vary, y = "Y", color = "Study"), alpha = 0.7, size = 2) +
+      geom_line(data = spline_data, aes(x = x, y = predicted_Y, color = study), size = 1.2) +
+      facet_wrap(~study, scales = "free", ncol = ncol) +
+      labs(
+        title = paste("Stage 1: Spline for", pred, "-", var_to_vary, "by Study"),
+        x = var_to_vary,
+        y = "Y"
+      ) +
+      theme_minimal() +
+      theme(legend.position = "bottom")
+
+    plots[[var_to_vary]] <- spline_plot
   }
 
-  p1 <- ggplot() +
-    geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.7, size = 2) +
-    geom_line(data = age_plot_data, aes(x = Age, y = predicted_Y, color = study), size = 1.2) +
-    facet_wrap(~study, scales = "free", ncol = ncol) +
-    labs(
-      title = "Stage 1: Age Splines by Study",
-      subtitle = "Natural splines (df=3) fitted within each study",
-      x = "Age",
-      y = "Y"
-    ) +
-    theme_minimal() +
-    theme(legend.position = "bottom")
-  
-  # Plot 4: Residuals plot
-  residuals_data <- tibble()
-  
-  for (result in results) {
-    study_id <- result$study
-    age_model <- results[[study_id]]$models[["Age"]]
-    
-    residuals_data <- bind_rows(residuals_data, tibble(
-      study = study_id,
-      fitted = age_model$fitted_values,
-      residuals = age_model$residuals
-    ))
-  }
-  
-  p4 <- residuals_data %>%
+  # Residuals plot (single per model)
+  residual_plot <- residuals_data %>%
     ggplot(aes(x = fitted, y = residuals)) +
     geom_point(alpha = 0.6) +
     geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
     geom_smooth(se = FALSE, color = "blue") +
     facet_wrap(~study, scales = "free_x", ncol = ncol) +
     labs(
-      title = "Stage 1: Residuals vs Fitted",
+      title = paste("Stage 1: Residuals vs Fitted (", pred, ")"),
       x = "Fitted Values",
       y = "Residuals"
     ) +
     theme_minimal()
-  
+
   return(list(
-    splines = p1,
-    residuals = p4
+    splines = plots,
+    residuals = residual_plot
   ))
+}
+
+create_all_spline_plots <- function(results, ipd_data, preds = c(), ncol = 3) {
+  plots <- list()
+
+  for (pred in preds) {
+    single_plots <- create_single_spline_plot(results, ipd_data, pred, ncol)
+    
+    # Store by predictor name
+    plots[[pred]] <- single_plots
+  }
+
+  return(plots)
 }
 ```
 
-
-
-```{r, warning=FALSE}
-plots <- create_spline_plots(stage1_results, ipd_data)
-plots
+```{r}
+ipd_data <- read_csv("../data/generated_ipd.csv")
+# ipd_data$Study <- as.factor(ipd_data$Study)
+stage1_results <- fit_study_splines(ipd_data, outcome = "Y", 
+                                    predictors = c("Age", "BMI", "Age+BMI"), 
+                                    df_splines = 3)
+# stage1_summary <- extract_stage1_summary(stage1_results)
+plots <- create_all_spline_plots(stage1_results, ipd_data, preds = c("Age", "BMI", "Age+BMI"), ncol=2)
+```
+```{r}
+plots[["Age+BMI"]]
 ```
 
+```{r}
+plots[["Age"]]
+plots[["BMI"]]
+```
 
 
 
