@@ -36,21 +36,33 @@ generate_values <- function(value_str, n) {
   }
 }
 
-generate_study_data <- function(study_id, n, Y_range, ...) {
+generate_study_data <- function(study_id, n, Y_range, noise_sd, ...) {
   dp <- 5
-  Y <- round(generate_values(Y_range, n), dp)
   # X variables (dynamic arguments)
   x_ranges <- list(...)
   x_data <- map(x_ranges, ~round(generate_values(.x, n), dp))
-  
+  x_df <- as.data.frame(x_data)
+
+  # detect if Y is an expression
+  if (grepl("X", Y_range)) {
+    env <- as.list(x_df)
+    Y_expr <- parse(text = Y_range)
+    Y <- eval(Y_expr, envir = env)
+    
+    # Add noise
+    if (noise_sd > 0) {
+      Y <- Y + rnorm(n, mean = 0, sd = noise_sd)
+    }
+  } else {
+    Y <- generate_values(Y_range, n)
+  }
   # Create dataframe
-  df <- data.frame(
+  df_final <- tibble(
     Study = study_id,
-    Y = Y,
-    x_data
-  )
+    Y = round(Y, dp)
+  ) %>% bind_cols(x_df)
   
-  return(df)
+  return(df_final)
 }
 
 generate_from_table <- function(input_table) {
@@ -58,14 +70,20 @@ generate_from_table <- function(input_table) {
   
   for (i in 1:nrow(input_table)) {
     row <- input_table[i, ]
-    
+    # row_list <- as.list(row)
+
     # Get X columns dynamically
     x_cols <- names(row)[grepl("^X", names(row))]
-    x_ranges <- as.list(row[x_cols])
+    x_ranges <- row[x_cols]
     names(x_ranges) <- x_cols
     
     study_data <- do.call(generate_study_data, c(
-      list(study_id = row$study, n = row$n, Y_range = row$Y),
+      list(
+        study_id = row$study,
+        n = row$n,
+        Y_range = row$Y,
+        noise_sd = row$noise
+      ),
       x_ranges
     ))
     
@@ -81,6 +99,17 @@ generate_from_table <- function(input_table) {
 #   "1",    8,  "rbinom(n, 10, 0.5)",  "1:2", "runif(n, 3.5, 7.5)",
 #   "2",    6,  "rexp(n, 0.1)",        "2:4",        "rpois(n, 7)",
 #   "3",    10, "15:25",               "1:3", "rgamma(n, 2, 1)"
+# )
+# 
+# set.seed(2025)
+# generate_from_table(input)
+
+# example (expression)
+# input <- tribble(
+#   ~study, ~n,       ~Y,   ~X1,
+#   "1",    8,    "X1^2", "1.0:2.0",
+#   "2",    6,  "X1^2+2", "2.0:4.0",
+#   "3",    10, "X1^2+4", "1.0:3.0",
 # )
 # 
 # set.seed(2025)
