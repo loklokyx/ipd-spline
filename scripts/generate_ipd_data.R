@@ -4,10 +4,10 @@ source("data/random_data.r")
 
 # Define study parameters
 # input <- tribble(
-#   ~study, ~n, ~Y,                    ~X1,     ~X2,
-#   "1",    8,  "rnorm(n, 400, 50)",   "25:35", "runif(n, 18, 25)",
-#   "2",    6,  "rnorm(n, 500, 70)",   "30:45", "runif(n, 20, 30)",
-#   "3",    10, "rnorm(n, 450, 60)",   "20:40", "runif(n, 22, 28)"
+#   ~study, ~n, ~noise, ~Y,                    ~X1,     ~X2,
+#   "1",    8,  0, "rnorm(n, 400, 50)",   "25:35", "runif(n, 18, 25)",
+#   "2",    6,  0, "rnorm(n, 500, 70)",   "30:45", "runif(n, 20, 30)",
+#   "3",    10, 0, "rnorm(n, 450, 60)",   "20:40", "runif(n, 22, 28)"
 # )
 
 myfunc  = "(1+exp(-.1*X1))^(-1)"
