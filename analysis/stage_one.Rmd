@@ -16,9 +16,7 @@ library(rms)
 ```{r}
 ipd_data <- read_csv("../data/generated_ipd.csv")
 ipd_data$Study <- as.factor(ipd_data$Study)
-model_preds <- c("Age",
-                 "rcs(Age, 3)",
-                 "rcs(Age, c(10,20,50))+rcs(Age, 3)")
+model_preds <- c(make_rcs(ipd_data$Age, knots=5))
 preds <- c("Age")
 # glimpse(ipd_data)
 # summary(ipd_data)
@@ -45,12 +43,12 @@ plots <- create_all_spline_plots(stage1_results, ipd_data, preds = model_preds, 
 ```
 
 ```{r, fig.height=5}
-plots$`rcs(Age, 3)`
+plots$`rcs(Age, c(2.7, 14.4, 22.6, 30.6, 70.2))`
 ```
 
 ```{r}
 compares = list(c("1","2"), c("3","4"), c("5","6"))
-desired = model_preds[2]
+desired = model_preds[1]
 for (i in seq_along(compares)) {
   compare <- compares[[i]]
 
@@ -66,24 +64,55 @@ for (i in seq_along(compares)) {
 
 # func
 ```{r}
+dd <- datadist(ipd_data)
+options(datadist = "dd")
+
+make_rcs <- function(x, knots = NULL, n = NULL, dp = 1) {
+  # Extract variable name (last part after $)
+  var_name <- tail(strsplit(deparse(substitute(x)), "\\$")[[1]], 1)
+  
+  quan <- list(
+    '3' = c(0.10, 0.50, 0.90),
+    '4' = c(0.05, 0.35, 0.65, 0.95),
+    '5' = c(0.05, 0.275, 0.50, 0.725, 0.95),
+    '6' = c(0.05, 0.23, 0.41, 0.59, 0.77, 0.95),
+    '7' = c(0.025, 0.1833, 0.3417, 0.50, 0.6583, 0.8167, 0.975)
+  )
+  
+  if (!is.null(n)) {
+    knot_str <- paste(n, collapse = ", ")
+    return(sprintf("rcs(%s, %s)", var_name, knot_str))
+  }
+  
+  if (!is.null(knots)) {
+    preset_str <- as.character(knots)
+    if (preset_str %in% names(quan)) {
+      knot_values <- quantile(x, probs = quan[[preset_str]], na.rm = TRUE)
+      knot_str <- paste(round(knot_values, dp), collapse = ", ")
+      return(sprintf("rcs(%s, c(%s))", var_name, knot_str))
+    }
+  }
+  
+  return(sprintf("rcs(%s)", var_name))
+}
+
 fit_study_splines <- function(data, outcome = "Y", predictors = c()) {
   study_results <- list()
   studies <- unique(data$Study)
-  
+
+
   for (s in studies) {
-    study_data <- dplyr::filter(data, Study == s)
+    study_data <- filter(data, Study == s)
     spline_models <- list()
     
     for (pred in predictors) {
       formula_obj <- as.formula(paste0(outcome, " ~ ", pred))
+      model <- ols(formula_obj, data = study_data)
       
-      model <- lm(formula_obj, data = study_data)
       spline_models[[pred]] <- list(
         predictor = pred,
         study = s,
         model = model,
-        formula_obj = deparse(formula_obj),
-        summary = summary(model),
         fitted_values = fitted(model),
         residuals = residuals(model)
       )
@@ -225,4 +254,3 @@ create_all_spline_plots <- function(results, ipd_data, preds = c(), vary_var, nc
   return(plots)
 }
 ```
-
