@@ -1,0 +1,200 @@
+---
+title: "Simulation Analysis"
+author: "Lok Yiu Xuan [23171563]"
+date: "2025-08-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+```
+
+# Read Simulation Data
+```{r}
+files <- list(
+  pooled_knots3 = "../data/1800/pooled_knots3.csv", 
+  meta_knots3 = "../data/1800/meta_knots3.csv",
+  
+  pooled_knots4 = "../data/1800/pooled_knots4.csv", 
+  meta_knots4 = "../data/1800/meta_knots4.csv",
+  
+  pooled_knots5 = "../data/1800/pooled_knots5.csv", 
+  meta_knots5 = "../data/1800/meta_knots5.csv"
+)
+sim_data <- lapply(files, read_csv, show_col_types = FALSE)
+
+files2 <- list(
+  pooled_knots3 = "../data/600/pooled_knots3.csv", 
+  meta_knots3 = "../data/600/meta_knots3.csv",
+  
+  pooled_knots4 = "../data/600/pooled_knots4.csv", 
+  meta_knots4 = "../data/600/meta_knots4.csv"
+)
+sim_data2 <- lapply(files2, read_csv, show_col_types = FALSE)
+```
+
+# Calculate Metrics Reduce df
+```{r}
+calculate_metrics <- function(df, level = 0.95) {
+  # identify simulation columns
+  sim_cols <- grep("^sim_", names(df), value = TRUE)
+  Y_true <- df$Y
+  
+  alpha <- 1 - level
+  z_val <- qnorm(1 - alpha / 2)
+  
+  # extract simulation matrix for easier computation
+  sim_matrix <- as.matrix(df[, sim_cols])
+  row_means <- rowMeans(sim_matrix)
+  row_vars <- apply(sim_matrix, 1, var)
+  row_mses <- rowMeans((sim_matrix - Y_true)^2)
+
+  tibble(
+    X = df$X,
+    Y_true = Y_true,
+    bias = row_means - Y_true,
+    variance = row_vars,
+    mse = row_mses,
+    mean_pred = row_means,
+    lower_ci = row_means - z_val * sqrt(row_vars),
+    upper_ci = row_means + z_val * sqrt(row_vars)
+  )
+}
+
+# Apply to all files in a list
+metrics_list <- lapply(sim_data, calculate_metrics, level = 0.95)
+metrics_list2 <- lapply(sim_data2, calculate_metrics, level = 0.95)
+
+# Add method name to each element if not already
+for (i in seq_along(metrics_list)) {
+  metrics_list[[i]]$method <- names(metrics_list)[i]
+}
+for (i in seq_along(metrics_list2)) {
+  metrics_list2[[i]]$method <- names(metrics_list2)[i]
+}
+```
+
+# Metrics Plots
+```{r}
+# Helper: Extract common substring from method names
+extract_common_label <- function(methods) {
+  split_methods <- strsplit(methods, "_")
+  common_parts <- Reduce(intersect, split_methods)
+  if (length(common_parts) == 0) {
+    return("Mixed")
+  }
+  return(paste(common_parts, collapse = "_"))
+}
+
+plot_metric <- function(df_list, metric, y_label = metric) {
+  chunked_list <- split(df_list, ceiling(seq_along(df_list)/2))
+  plots <- list()
+  
+  for (i in seq_along(chunked_list)) {
+    chunk_df <- bind_rows(chunked_list[[i]])
+    common_label <- extract_common_label(unique(chunk_df$method))
+    
+    p <- ggplot(chunk_df, aes(x = X, color = method)) +
+      geom_line(aes_string(y = metric), size = 1) +
+      theme_minimal() +
+      labs(
+        title = paste(y_label, "-", common_label),
+        x = "X",
+        y = y_label
+      )
+    
+    plots[[i]] <- p
+  }
+  return(plots)
+}
+```
+
+## n=1800
+```{r}
+plots_bias <- plot_metric(metrics_list, "bias")
+plots_var  <- plot_metric(metrics_list, "variance")
+plots_mse  <- plot_metric(metrics_list, "mse")
+```
+### bias, variance, mse
+```{r, fig.height=10, fig.width=10}
+combined_plot <- wrap_plots(
+  wrap_plots(plots_bias),
+  wrap_plots(plots_var),
+  wrap_plots(plots_mse),
+  ncol = 1
+) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+combined_plot
+```
+### CI True Value
+```{r}
+plot_ci <- function(df_list, alpha = 0.2) {
+  chunked_list <- split(df_list, ceiling(seq_along(df_list) / 2))
+  plots <- list()
+  
+  for (i in seq_along(chunked_list)) {
+    chunk_df <- bind_rows(chunked_list[[i]])
+    common_label <- extract_common_label(unique(chunk_df$method))
+    
+    p <- ggplot(
+      data = chunk_df,
+      mapping = aes(x = X, y = mean_pred, color = method, fill = method)
+      ) +
+      geom_line(size = 1) +
+      geom_ribbon(
+        aes(ymin = lower_ci, ymax = upper_ci),
+        alpha = alpha, color = NA
+      ) +
+      geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
+      theme_minimal() +
+      labs(
+        title = paste("Predicted Values", common_label),
+        x = "X", y = "Y"
+      )
+    
+    plots[[i]] <- p
+  }
+  return(plots)
+}
+```
+```{r}
+plots_ci <- plot_ci(metrics_list)
+```
+```{r, fig.height=10, fig.width=10}
+combined_plot <- wrap_plots(plots_ci, ncol = 1)
+print(combined_plot)
+```
+
+## n=600
+### bias, variance, mse
+```{r}
+plots_bias2 <- plot_metric(metrics_list2, "bias")
+plots_var2  <- plot_metric(metrics_list2, "variance")
+plots_mse2  <- plot_metric(metrics_list2, "mse")
+```
+```{r, fig.height=10, fig.width=10}
+combined_plot2 <- wrap_plots(
+  wrap_plots(plots_bias2),
+  wrap_plots(plots_var2),
+  wrap_plots(plots_mse2),
+  ncol = 1
+) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+combined_plot2
+```
+### CI True Value
+```{r}
+plots_ci2 <- plot_ci(metrics_list2)
+```
+```{r, fig.height=10, fig.width=10}
+combined_plot2 <- wrap_plots(plots_ci2, ncol = 1)
+print(combined_plot2)
+```
+
+

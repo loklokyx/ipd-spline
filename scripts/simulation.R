@@ -20,9 +20,10 @@ ipd_data <- generate_from_table(input)
 ipd_data <- ipd_data %>%
   rename(X = X1) %>%
   mutate(Y = abs(Y), Study = as.factor(Study))
+write_csv(ipd_data, "data/generated_ipd.csv")
 
 # settings
-n_sim <- 1
+n_sim <- 1000
 knots_list <- c(3, 4, 5)
 noise_sd <- 2
 
@@ -46,7 +47,7 @@ make_rcs <- function(x, var = "X", knots = 3, dp = 1) {
 
 decide_knots <- function(n) {
   if (n < 50) {
-    return(3)
+    return(c(3))
   } else if (n < 200) {
     return(c(3, 4))
   } else {
@@ -54,8 +55,19 @@ decide_knots <- function(n) {
   }
 }
 
+# valid knots across all studies
+study_sizes <- ipd_data %>% 
+  group_by(Study) %>% 
+  summarise(n = n(), .groups = 'drop')
+study_knots <- lapply(study_sizes$n, decide_knots)
+study_valid_knots <- Reduce(intersect, study_knots)
+
+# intersect user-defined list
+valid_knots <- intersect(knots_list, study_valid_knots)
+cat("Valid knots for all studies:", valid_knots, "\n")
+
 # simulations for each knot setting
-for (knots in knots_list) {
+for (knots in valid_knots) {
   cat("Running simulation for knots =", knots, "\n")
   
   # initialize result storage
@@ -84,7 +96,6 @@ for (knots in knots_list) {
         X = study_data$X,
         Y = predict(model, newdata = study_data)
       )
-      
       pred_ori_data <- rbind(pred_ori_data, temp)
     }
 
@@ -110,25 +121,7 @@ for (knots in knots_list) {
     meta_results[[paste0("sim_", i)]] <- meta_pred
   }
 
-  # calculate bias, variance, MSE
-  pooled_bias <- rowMeans(pooled_preds_matrix) - ipd_data$Y
-  pooled_variance <- apply(pooled_preds_matrix, 1, var)
-  pooled_mse <- rowMeans((pooled_preds_matrix - ipd_data$Y)^2)
-  
-  meta_bias <- rowMeans(meta_preds_matrix) - ipd_data$Y
-  meta_variance <- apply(meta_preds_matrix, 1, var)
-  meta_mse <- rowMeans((meta_preds_matrix - ipd_data$Y)^2)
-  
-  # Add bias, variance, MSE to results
-  pooled_results$bias <- pooled_bias
-  pooled_results$variance <- pooled_variance
-  pooled_results$mse <- pooled_mse
   pooled_results$Study <- 1
-  
-  meta_results$bias <- meta_bias
-  meta_results$variance <- meta_variance
-  meta_results$mse <- meta_mse
-  
   # save in csv
   write_csv(pooled_results, paste0("./data/pooled_knots", knots, ".csv"))
   write_csv(meta_results, paste0("./data/meta_knots", knots, ".csv"))  
