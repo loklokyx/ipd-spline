@@ -1,0 +1,122 @@
+---
+title: "Models in lmer package"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(lme4)
+library(ggplot2)
+```
+
+# Read Data
+```{r}
+myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
+true_data <- tibble(X1 = seq(20, 100, length.out = 200)) %>%
+  mutate(Y = eval(parse(text = myfunc)))
+
+ipd_data <- read_csv("../data/generated_ipd.csv") %>%
+  mutate(Study = as.factor(Study))
+
+nrow(ipd_data)
+```
+```{r}
+noise_sd <- 2
+set.seed(10)
+ipd_data <- ipd_data %>%
+  mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd))
+```
+
+```{r}
+dd <- datadist(ipd_data)
+options(datadist = "dd")
+
+make_rcs <- function(data, variable = "X", knots = NULL, n = NULL, dp = 1) {
+  quan <- list(
+    '3' = c(0.10, 0.50, 0.90),
+    '4' = c(0.05, 0.35, 0.65, 0.95),
+    '5' = c(0.05, 0.275, 0.50, 0.725, 0.95),
+    '6' = c(0.05, 0.23, 0.41, 0.59, 0.77, 0.95),
+    '7' = c(0.025, 0.1833, 0.3417, 0.50, 0.6583, 0.8167, 0.975)
+  )
+  
+  if (!is.null(n)) {
+    knot_str <- paste(n, collapse = ", ")
+    return(sprintf("rcs(%s, %s)", variable, knot_str))
+  }
+  
+  if (!is.null(knots)) { 
+    preset_str <- as.character(knots) 
+    if (preset_str %in% names(quan)) { 
+      knot_values <- quantile(data, probs = quan[[preset_str]], na.rm = TRUE) 
+      knot_str <- paste(round(knot_values, dp), collapse = ", ") 
+      return(sprintf("rcs(%s, c(%s))", variable, knot_str)) 
+    } 
+  }
+  
+  return(sprintf("rcs(%s)", variable))
+}
+```
+# Stage 1
+## Fit study-specific spline models
+```{r}
+studies <- unique(ipd_data$Study)
+study_models <- setNames(lapply(studies, function(s) {
+  study_data <- subset(ipd_data, Study == s)
+  pred_str <- make_rcs(study_data$Age, "Age", knots = 3)
+  formula_obj <- as.formula(paste0("Y ~ ", pred_str))
+  model <- ols(formula_obj, data = study_data)
+  
+  list(
+    study = s,
+    formula = formula_obj,
+    data = study_data,
+    model = model,
+    fitted = fitted(model),
+    residuals = residuals(model)
+  )
+}), studies)
+```
+## Predictions per study
+```{r}
+pred_ori_data <- do.call(rbind, lapply(study_models, function(sm) {
+  data.frame(
+    study = sm$study,
+    Age   = sm$data$Age,
+    Y     = predict(sm$model, newdata = sm$data)
+  )
+}))
+head(pred_ori_data)
+```
+# Stage 2
+```{r}
+lmer_data <- pred_ori_data
+pred_str <- make_rcs(lmer_data$Age, "Age", knots = 5)
+lmer_formula <- as.formula(paste0("Y ~ ", pred_str, "+ (1 | study)"))
+lmer_model <- lmer(lmer_formula, data = lmer_data)
+lmer_data$pred_null <- predict(lmer_model, newdata = lmer_data, re.form = NULL)
+lmer_data$pred_study <- predict(lmer_model, newdata = lmer_data, re.form = ~(1 | study))
+lmer_data$pred_NA <- predict(lmer_model, newdata = lmer_data, re.form = NA)
+lmer_data$pred_0 <- predict(lmer_model, newdata = lmer_data, re.form = ~0)
+plot_data <- lmer_data %>%
+  select(study, Age, pred_null, pred_study, pred_NA, pred_0) %>%
+  pivot_longer(cols = starts_with("pred"),
+               names_to = "Prediction_Type",
+               values_to = "Predicted")
+```
+
+## Method 2: random effect
+```{r}
+ggplot(plot_data, aes(x = Age, y = Predicted, color = Prediction_Type)) +
+  geom_point(alpha = 0.6) +
+  geom_line(data = true_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
+  facet_wrap(~Prediction_Type, scales = "fixed") +
+  labs(title = "Comparison of Predictions by re.form",
+       x = "Age", y = "Predicted Y") +
+  theme_minimal()
+```
+
