@@ -1,7 +1,7 @@
 ---
 title: "IPD Background"
 author: "Lok Yiu Xuan [23171563]"
-date: "2025-07-03"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
 output: html_document
 ---
 
@@ -151,16 +151,11 @@ stage1_summary_list <- lapply(study_models, function(sm) {
 stage1_summary <- do.call(rbind, stage1_summary_list)
 stage1_summary
 ```
-```{r}
-# map(study_models, ~ (.$model))
-```
-
 # Stage 2
 ## Method 1: Combine all studies as 1 pooled dataset
 ```{r}
 combined_data <- pred_ori_data
 plot(combined_data$Y~combined_data$Age, col=combined_data$study)
-# plot(pred_ori_data$Y~pred_ori_data$Age)
 ```
 ```{r}
 combined_data$study <- 1
@@ -173,13 +168,6 @@ pred1 <- predict(pooled_model, newdata = common_grid1, se.fit=T)
 common_grid1$Y <- pred1$linear.predictors
 common_grid1$lower <- pred1$linear.predictors - 1.96 * pred1$se.fit
 common_grid1$upper <- pred1$linear.predictors + 1.96 * pred1$se.fit
-
-# ggplot() +
-#   geom_line(data=pred_ori_data, aes(x = Age, y = Y, color = study), alpha = 0.5) +
-#   geom_line(data = common_grid1, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
-#   geom_ribbon(data = common_grid1, aes(x = Age, ymin = lower, ymax = upper), fill = "blue", alpha = 0.2) +
-#   labs(title = "Combined Pooled Spline with 95% CI", x = "Age", y = "Predicted Y") +
-#   theme_minimal()
 ```
 ## Method 2: Meta-analysis using per-study predicted splines
 ```{r}
@@ -189,16 +177,6 @@ meta_formula <- as.formula(paste0("Y ~ ", combined_pred_str, "+ (1 | study)"))
 meta_model <- lmer(meta_formula, data = meta_data)
 
 meta_data$Y_pred <- predict(meta_model, newdata = meta_data, re.form = NA)
-
-# ggplot(meta_data) +
-#   geom_line(aes(x = Age, y = Y, color = study), alpha = 0.5) +
-#   geom_line(aes(x = Age, y = Y_pred), color = "red", linewidth = 1.0) +
-#   labs(
-#     title = "Stage 2 (Method 2): Meta-Analysed Splines",
-#     x = "Age",
-#     y = "Predicted Y"
-#   ) +
-#   theme_minimal()
 ```
 ## combine
 ```{r}
@@ -223,13 +201,6 @@ ggplot() +
     y = "Predicted Y"
   ) +
   theme_minimal()
-
-# ggplot(plot_data, aes(x = X1, y = Y)) +
-#   geom_line(color = "blue", linewidth = 1.5) +
-#   labs(title = "Plot of myfunc",
-#        x = "X1",
-#        y = "Y") +
-#   theme_minimal()
 ```
 --weights to mix model?
 
