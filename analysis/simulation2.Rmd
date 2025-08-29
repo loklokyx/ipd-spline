@@ -74,13 +74,10 @@ df2_all <- bind_rows(metrics2_list) %>%
                values_to = "metric_value")
 df2_all$itr <- interaction(df2_all$method, df2_all$knots)
 
-# idx <- df2_all$method != 'meta_re'
-# df2_all <- df2_all[idx,]
-
 ggplot(df2_all, aes(x = Age, y = metric_value, color = method, group = itr)) +
-  geom_point(size = 1) +
-  # geom_line(size = 1) +
-  facet_grid(metric_name ~ knots) +
+  geom_point(data = subset(df2_all, method == "meta_re"), size = 1) +
+  geom_line(data = subset(df2_all, method != "meta_re"), size = 1.3) +
+  facet_grid(metric_name ~knots, scales = "free_y") +
   theme_minimal() +
   labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
   theme(
@@ -91,12 +88,13 @@ ggplot(df2_all, aes(x = Age, y = metric_value, color = method, group = itr)) +
 ```
 ### CI True Value
 ```{r, fig.height=12, fig.width=5}
-ggplot(df2_all, aes(x = Age, y = mean_pred, color = method, fill = method, group = itr)) +
-  geom_point(size = 1) +
-  # geom_line(size = 1) +
+ggplot(df2_all, aes(x = Age, y = mean_pred, color = method, 
+                    fill = method, group = itr)) +
+  geom_point(data = subset(df2_all, method == "meta_re"), size = 1) +
+  geom_line(data = subset(df2_all, method != "meta_re"), size = 1.3) +
   geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
   geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1, scales = "free_y") +
+  facet_wrap(~knots, ncol = 1) +
   theme_minimal() +
   labs(
     x = "Age",
