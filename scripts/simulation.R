@@ -1,140 +1,258 @@
+library(gtools)
 library(tidyverse)
 library(rms)
 library(lme4)
 source("data/random_data.r")
 
+# Data generation
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
 input <- tribble(
-  ~study, ~n, ~noise,     ~Y,         ~X1,
+  ~study, ~n, ~noise, ~Y, ~X1,
   "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
   "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
   "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
   "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
   "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
-  "6", 300, 0, myfunc, "rnorm(n, 80, 5)",
+  "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
 )
 
 set.seed(2025)
-ipd_data <- generate_from_table(input)
-
-ipd_data <- ipd_data %>%
+ipd_data <- generate_from_table(input) %>%
   rename(Age = X1) %>%
   mutate(Y = abs(Y), Study = as.factor(Study))
+
 write_csv(ipd_data, "data/generated_ipd.csv")
 
-# settings
-n_sim <- 1000
-knots_list <- c(3, 4, 5)
-noise_sd <- 2
+# Configuration - keep all settings together
+CONFIG <- list(
+  data = ipd_data,
+  n_sim = 10,
+  knots_list = c(3, 4),
+  # knots_list = c(3, 4),
+  stage2_knots_list = c(5),
+  noise_sd = 2,
+  include_meta_re = TRUE,
+  data_dir = "./data/",
+  simulated_dir = "./data/simulated/"
+)
 
-dd <- datadist(ipd_data)
+dd <- datadist(CONFIG$data)
 options(datadist = "dd")
 
-# restricted cubic spline formula
-make_rcs <- function(x, var = "Age", knots = 3, dp = 1) {
-  quan <- list(
+# Helper functions
+make_quantiles <- function(x, knot, dp = 2) {
+  quantile_map <- list(
     '3' = c(0.10, 0.50, 0.90),
     '4' = c(0.05, 0.35, 0.65, 0.95),
     '5' = c(0.05, 0.275, 0.50, 0.725, 0.95)
   )
-  if (as.character(knots) %in% names(quan)) {
-    knot_values <- quantile(x, probs = quan[[as.character(knots)]])
-    sprintf("rcs(%s, c(%s))", var, paste(round(knot_values, dp), collapse = ", "))
-  } else {
-    sprintf("rcs(%s)", var)
-  }
-}
-
-decide_knots <- function(n) {
-  if (n < 50) {
-    return(c(3))
-  } else if (n < 200) {
-    return(c(3, 4))
-  } else {
-    return(c(3, 4, 5))
-  }
-}
-
-# valid knots across all studies
-study_sizes <- ipd_data %>% 
-  group_by(Study) %>% 
-  summarise(n = n(), .groups = 'drop')
-study_knots <- lapply(study_sizes$n, decide_knots)
-study_valid_knots <- Reduce(intersect, study_knots)
-
-# intersect user-defined list
-valid_knots <- intersect(knots_list, study_valid_knots)
-cat("Valid knots for all studies:", valid_knots, "\n")
-
-# simulations for each knot setting
-for (knots in valid_knots) {
-  cat("Running simulation for knots =", knots, "\n")
-  temp_data <- ipd_data
-  temp_data$knots <- knots
-  # initialize result storage
-  pooled_results <- temp_data
-  meta_results <- temp_data
-  meta_re_results <- temp_data
-  pooled_results$method <- "pooled"
-  meta_results$method <- "meta"
-  meta_re_results$method <- "meta_re"
-  # for bias, variance, MSE calculations
-  pooled_preds_matrix <- matrix(NA, nrow = nrow(ipd_data), ncol = n_sim)
-  meta_preds_matrix <- matrix(NA, nrow = nrow(ipd_data), ncol = n_sim)
-  meta_preds_re_matrix <- matrix(NA, nrow = nrow(ipd_data), ncol = n_sim)
   
-  for (i in 1:n_sim) {
-    # random shift to true Y (Y = Y + epsilon)
-    set.seed(i)
-    sim_data <- ipd_data %>% mutate(Y = Y + rnorm(n(), 0, noise_sd))
+  probs <- quantile_map[[as.character(knot)]]
+  if (is.null(probs)) return(NULL)
+  
+  round(quantile(x, probs = probs, na.rm = TRUE), dp)
+}
+
+make_rcs_formula <- function(var = "Age", quantiles = NULL) {
+  if (is.null(quantiles)) return(sprintf("rcs(%s)", var))
+  sprintf("rcs(%s, c(%s))", var, paste(quantiles, collapse = ", "))
+}
+
+get_max_knots <- function(n) {
+  if (n < 50) return(3)
+  if (n < 200) return(4)
+  return(5)
+}
+
+is_valid_knot <- function(n, knot) {
+  knot <= get_max_knots(n)
+}
+
+# Get valid knot combinations
+get_valid_combinations <- function(knots_list) {
+  study_ids <- unique(CONFIG$data$Study)
+  # Get study sizes
+  study_max_n <- sapply(study_ids, function(s) sum(CONFIG$data$Study == s))
+
+  valid_knots_per_study <- lapply(study_max_n, function(n) {
+    max_knot <- get_max_knots(n)
+    all_knots <- 3:max_knot # assume min knots = 3
+    intersect(all_knots, knots_list)
+  })
+  names(valid_knots_per_study) <- study_ids
+  
+  expand.grid(valid_knots_per_study, KEEP.OUT.ATTRS = FALSE)
+}
+
+# Stage 1: Individual study predictions
+run_stage1 <- function(sim_data, study_ids, stage1_knots_vec) {
+  pred_stage1 <- data.frame()
+  stage1_probs <- list()
+  
+  for (s_idx in seq_along(study_ids)) {
+    s <- study_ids[s_idx]
+    study_data <- subset(sim_data, Study == s)
+    knots_s <- stage1_knots_vec[s_idx]
     
-    # FIRST STAGE: fit individual study, get predictions on original data
-    studies <- unique(sim_data$Study)
-    pred_ori_data <- data.frame()
+    probs <- make_quantiles(study_data$Age, knots_s)
+    stage1_probs[[as.character(s)]] <- probs
     
-    for (s in studies) {
-      study_data <- subset(sim_data, Study == s)
-      pred_str <- make_rcs(study_data$Age, "Age", knots = knots)
-      formula_obj <- as.formula(paste0("Y ~ ", pred_str))
-      model <- ols(formula_obj, data = study_data)
-      temp <- data.frame(
-        Study = s,
-        Age = study_data$Age,
-        Y = predict(model, newdata = study_data)
+    pred_str <- make_rcs_formula("Age", probs)
+    formula_obj <- as.formula(paste0("Y ~ ", pred_str))
+    model <- ols(formula_obj, data = study_data)
+    
+    temp <- data.frame(
+      Study = s,
+      Age = study_data$Age,
+      Y = predict(model, newdata = study_data)
+    )
+    pred_stage1 <- rbind(pred_stage1, temp)
+  }
+  
+  list(data = pred_stage1, probs = stage1_probs)
+}
+
+# Stage 2: Meta-analysis methods
+run_stage2 <- function(pred_stage1, stage2_knots) {
+  probs2 <- make_quantiles(pred_stage1$Age, stage2_knots)
+  stage2_pred_str <- make_rcs_formula("Age", probs2)
+  
+  results <- list()
+  
+  # Method 1: Pooled
+  pooled_data <- pred_stage1
+  pooled_data$Study <- 1
+  pooled_formula <- as.formula(paste0("Y ~ ", stage2_pred_str))
+  pooled_model <- ols(pooled_formula, data = pooled_data)
+  results$pooled <- predict(pooled_model, newdata = CONFIG$data)
+  
+  # Method 2 & 3: Meta-analysis
+  meta_formula <- as.formula(paste0("Y ~ ", stage2_pred_str, " + (1 | Study)"))
+  meta_model <- lmer(meta_formula, data = pred_stage1)
+  results$meta <- predict(meta_model, newdata = CONFIG$data, re.form = NA)
+  
+  if (CONFIG$include_meta_re) {
+    results$meta_re <- predict(meta_model, newdata = CONFIG$data, re.form = ~(1 | Study))
+  }
+  
+  list(results = results, stage2_probs = probs2)
+}
+
+# Single simulation run
+run_single_simulation <- function(sim_i, study_ids, stage1_knots_vec, stage2_knots) {
+  set.seed(sim_i)
+  sim_data <- CONFIG$data %>% mutate(Y = Y + rnorm(n(), 0, CONFIG$noise_sd))
+  
+  stage1_results <- run_stage1(sim_data, study_ids, stage1_knots_vec)
+  stage2_results <- run_stage2(stage1_results$data, stage2_knots)
+  
+  list(
+    predictions = stage2_results$results,
+    stage1_probs = if (sim_i == 1) stage1_results$probs else NULL,
+    stage2_probs = if (sim_i == 1) stage2_results$stage2_probs else NULL
+  )
+}
+
+# Format and save results
+save_simulation_results <- function(all_results, filename) {
+  # Initialize method results storage
+  method_names <- names(all_results[[1]]$predictions)
+  mse_list <- list()   # <-- initialize mse_list!
+  
+  # Compute weighted MSE for each method
+  Y_true <- CONFIG$data$Y
+  # Save simulated predictions
+  row_based_df <- data.frame()
+  for (method in method_names) {
+    sim_matrix <- do.call(cbind, lapply(all_results, function(res) res$predictions[[method]]))
+    
+    temp_df <- data.frame(method = method, sim_matrix)
+    row_based_df <- rbind(row_based_df, temp_df)
+
+    row_mses <- rowMeans((sim_matrix - Y_true)^2)
+    overall_mse <- mean(row_mses)  # average MSE for this setting
+
+    # # Optional: use equal weight or weighted by study size
+    # weights <- table(CONFIG$data$Study)[as.character(CONFIG$data$Study)]
+    # weights <- as.numeric(weights)
+    # # Weighted overall MSE
+    # overall_mse <- sum(weights * row_mses) / sum(weights)
+    mse_list[[paste0("MSE_", method)]] <- overall_mse
+  }
+  
+  # Rename sim columns
+  colnames(row_based_df) <- c("method", paste0("sim_", seq_len(CONFIG$n_sim)))
+  final_df <- cbind(CONFIG$data, row_based_df)
+  
+  write_csv(final_df, paste0(CONFIG$simulated_dir, filename, ".csv"))
+  cat(filename," Saved!!!\n")
+  
+  # Return settings info from first simulation
+  list(
+    stage1_probs = all_results[[1]]$stage1_probs,
+    stage2_probs = all_results[[1]]$stage2_probs,
+    MSE = mse_list
+  )
+}
+
+# Main simulation loop
+study_ids <- unique(CONFIG$data$Study)
+combinations <- get_valid_combinations(CONFIG$knots_list)
+settings_list <- list()
+
+for (stage2_knots in CONFIG$stage2_knots_list) {
+  for (combo_idx in seq_len(nrow(combinations))) {
+    stage1_knots_vec <- as.numeric(combinations[combo_idx, ])
+
+    # # for same knots validation before run all combinations
+    # if (!all(stage1_knots_vec==stage2_knots)) next
+
+    filename <- paste0("study", paste0(stage1_knots_vec, collapse = ""), 
+                       "_second", stage2_knots)
+    
+    # Run all simulations for this combination
+    all_results <- list()
+    for (sim_i in seq_len(CONFIG$n_sim)) {
+      all_results[[sim_i]] <- run_single_simulation(
+        sim_i, study_ids, stage1_knots_vec, stage2_knots
       )
-      pred_ori_data <- rbind(pred_ori_data, temp)
     }
 
-    # SECOND STAGE: Method 1 - Pooled analysis
-    combined_data <- pred_ori_data
-    combined_data$Study <- 1  # Treat as single study
-    combined_pred_str <- make_rcs(combined_data$Age, "Age", knots = knots)
-    pooled_formula <- as.formula(paste0("Y ~ ", combined_pred_str))
-    pooled_model <- ols(pooled_formula, data = combined_data)
-    # predict on original data
-    pooled_pred <- predict(pooled_model, newdata = ipd_data)
-    pooled_preds_matrix[, i] <- pooled_pred
-    
-    # SECOND STAGE: Method 2 - Meta-analysis
-    meta_data <- pred_ori_data
-    meta_formula <- as.formula(paste0("Y ~ ", combined_pred_str, " + (1 | Study)"))
-    meta_model <- lmer(meta_formula, data = meta_data)
-    meta_pred <- predict(meta_model, newdata = ipd_data, re.form = NA)
-    meta_preds_matrix[, i] <- meta_pred
-    
-    # SECOND STAGE: Method 3 - Meta-analysis Random Effects
-    meta_pred_re <- predict(meta_model, newdata = ipd_data, re.form = ~(1 | Study))
-    meta_preds_re_matrix[, i] <- meta_pred_re
-    
-    # add predictions to results
-    pooled_results[[paste0("sim_", i)]] <- pooled_pred
-    meta_results[[paste0("sim_", i)]] <- meta_pred
-    meta_re_results[[paste0("sim_", i)]] <- meta_pred_re
-  }
-  # pooled_results$Study <- 1
-  final_results <- rbind(pooled_results,meta_results, meta_re_results)
-  # save in csv
-  write_csv(final_results, paste0("./data/simul_knots", knots, ".csv"))
-}
+    # Save results and collect settings
+    results_info <- save_simulation_results(all_results, filename)
 
+    # Store settings with MSEs
+    prob_df <- data.frame(Name = filename)
+    for (s in study_ids) {
+      prob_df[paste0("Study", s)] <- paste(results_info$stage1_probs[[s]], collapse = ",")
+    }
+    prob_df$Stage2 <- paste(results_info$stage2_probs, collapse = ",")
+    
+    # Add all MSEs
+    for (col in names(results_info$MSE)) {
+      prob_df[[col]] <- results_info$MSE[[col]]
+    }
+    settings_list[[filename]] <- unlist(prob_df[1, ])
+  }
+}
 cat("Simulation completed!!!")
+
+# Save settings with ranks
+if (length(settings_list) > 0) {
+  settings_df <- do.call(rbind, settings_list)
+  settings_df <- as.data.frame(settings_df, stringsAsFactors = FALSE)
+  
+  # Convert MSE columns to numeric
+  mse_cols <- grep("^MSE_", names(settings_df), value = TRUE)
+  settings_df[mse_cols] <- lapply(settings_df[mse_cols], as.numeric)
+  
+  # Add rank for each method based on MSE (smaller is better)
+  for (col in mse_cols) {
+    rank_col <- sub("MSE_", "Rank_", col)
+    settings_df[[rank_col]] <- rank(settings_df[[col]], ties.method = "min")
+  }
+  
+  # Save to CSV
+  write_csv(settings_df, paste0(CONFIG$data_dir, "simul_settings.csv"))
+  cat("Setting saved!!!")
+}
