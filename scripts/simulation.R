@@ -27,8 +27,7 @@ write_csv(ipd_data, "data/generated_ipd.csv")
 CONFIG <- list(
   data = ipd_data,
   n_sim = 10,
-  knots_list = c(3, 4),
-  # knots_list = c(3, 4),
+  knots_list = c(3, 4, 5),
   stage2_knots_list = c(5),
   noise_sd = 2,
   include_meta_re = TRUE,
