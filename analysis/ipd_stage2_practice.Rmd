@@ -1,0 +1,122 @@
+---
+title: "IPD Meta Analysis - Two Stage Approach in Practice from Online"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(estimatr)
+library(metafor)
+```
+
+# Two-Stage IPDMA
+
+This workflow implements a **two-stage individual participant data meta-analysis (IPDMA)** following the tutorial by Megha Psimatrix: [https://meghapsimatrix.com/posts/ipd_meta/#two-stage-ipdma](https://meghapsimatrix.com/posts/ipd_meta/#two-stage-ipdma).
+
+## Load Example Dataset
+```{r}
+bryan_dat <- read_csv(
+  "https://raw.githubusercontent.com/meghapsimatrix/datasets/master/causal/bryan_dat.csv"
+)
+
+glimpse(bryan_dat %>% select(classroom, condition, condition_collapsed, female, autonprosocial))
+```
+## Preprocess Data
+```{r}
+# creating treatment indicator
+bryan_dat <- bryan_dat %>%
+  mutate(trt_ind = as.integer(condition_collapsed == "expose treatment"),
+         female = ifelse(female == 1, "Female", "Not Female"))
+```
+## Define Stage 2 Estimation Function
+```{r}
+# function to estimate treatment effects
+estimate_effects <- function(dat){
+  # Ordinary least squares 
+  mod <- lm(autonprosocial ~ trt_ind, data = dat) 
+  # Robust SE 
+  cov_mat <- sandwich::vcovHC(mod, type = "HC1") 
+
+  data.frame(
+    estimate   = coef(mod)["trt_ind"],
+    std_error  = sqrt(diag(cov_mat))["trt_ind"]
+  )
+}
+```
+## Stage 2: Two-Stage IPDMA
+
+### First Stage: Study-Level Estimates
+```{r}
+first_stage_res <- bryan_dat %>%
+  group_by(classroom) %>%
+  summarise(res = list(estimate_effects(cur_data())), .groups = "drop") %>%
+  unnest(res)
+
+first_stage_res
+```
+
+### Second Stage: Meta-Analysis
+```{r}
+second_stage_res <- rma.uni(
+  yi = first_stage_res$estimate,
+  sei = first_stage_res$std_error,
+  method = "REML",
+  test = "knha"
+)
+
+# Display results
+data.frame(
+  estimate = as.vector(second_stage_res$b),
+  SE       = second_stage_res$se,
+  ci_lo    = second_stage_res$ci.lb,
+  ci_hi    = second_stage_res$ci.ub,
+  tau2     = second_stage_res$tau2
+)
+```
+
+## Subgroup Analysis by Female
+
+### First Stage: Study- & Subgroup-Level Estimates
+```{r}
+subgroup_fs_res <- bryan_dat %>%
+  group_by(classroom, female) %>%
+  summarise(res = list(estimate_effects(cur_data())), .groups = "drop") %>%
+  unnest(res)
+```
+### Second Stage: Meta-Analysis by Subgroup
+
+```{r}
+subgroup_results <- subgroup_fs_res %>%
+  group_by(female) %>%
+  summarise(
+    meta = list(
+      rma.uni(
+        yi = cur_data()$estimate, 
+        sei = cur_data()$std_error,
+        method = "REML",
+        test = "knha"
+      )
+    ),
+    .groups = "drop"
+  )
+
+# Extract results in tidy format
+stage2_res <- subgroup_results %>%
+  rowwise() %>%
+  mutate(result = list(data.frame(
+    rowname = "intrcpt",
+    est     = as.vector(meta$b),
+    SE      = meta$se,
+    ci_lo   = meta$ci.lb,
+    ci_hi   = meta$ci.ub,
+    tau_2   = meta$tau2
+  ))) %>%
+  select(female, result) %>%
+  unnest(result) %>%
+  mutate(across(c(est, SE, ci_lo, ci_hi, tau_2), ~ round(.x, 6)))
+
+stage2_res
+```
