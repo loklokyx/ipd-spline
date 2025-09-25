@@ -1,0 +1,118 @@
+---
+title: "Extrapolate"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(rms)
+library(lme4)
+library(ggplot2)
+```
+
+# Extrapolate
+```{r}
+run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
+  set.seed(10)
+  ipd_data <- data %>%
+    mutate(Study = as.factor(Study)) %>%
+    mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd)) %>% 
+    rename(study = Study)
+  
+  # Fit study-specific spline models
+  studies <- unique(ipd_data$study)
+  study_models <- lapply(studies, function(s) {
+    study_data <- subset(ipd_data, study == s)
+    pred_str <- make_rcs(study_data$Age, "Age", knots = knots)
+    formula_obj <- as.formula(paste0("Y ~ ", pred_str))
+    model <- lm(formula_obj, data = study_data)
+    
+    preds <- predict(model, newdata = data.frame(Age = ipd_data$Age), 
+                     interval = "confidence")
+    
+    data.frame(
+      study = s,
+      Age   = ipd_data$Age,
+      Y     = preds[, "fit"],
+      lower = preds[, "lwr"],
+      upper = preds[, "upr"]
+    )
+  })
+  
+  pred_data <- do.call(rbind, study_models)
+  
+  return(list(
+    data = ipd_data,
+    pred = pred_data
+  ))
+}
+
+plot_stage1 <- function(result){
+  knots_q <- make_quantiles(result$data$Age, knot = 5)
+  ggplot() +
+    geom_point(data = result$data, alpha = 0.3,
+               aes(x = Age, y = Y, color = study)) +
+    geom_line(data = result$pred,
+              aes(x = Age, y = Y, group = study),
+              linewidth = 1, alpha = 0.6, color = "blue") +
+    geom_ribbon(data = result$pred,
+                aes(x = Age, ymin = lower, ymax = upper, group = study),
+                alpha = 0.5, fill = "lightblue", color = NA) +
+    # geom_vline(xintercept = knots_q, linetype = "dashed", color = "red") +
+    labs(title = "Study-specific spline fits with observed data",
+         x = "Age", y = "Y") +
+    facet_wrap(~ study, scales = "free_y") +
+    theme_minimal()
+}
+```
+
+## no
+```{r}
+ipd_data_no <- read_csv("../data/generated_ipd_no.csv", show_col_types = FALSE)
+dd <- datadist(ipd_data_no)
+options(datadist = "dd")
+
+res_no <- run_ipd_ma(ipd_data_no, noise_sd = 1, knots = 3)
+# ggplot(res_no$data, aes(x = Age, y = Y, color = study)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "Observed data by Study",
+#        x = "Age", y = "Y") +
+#   theme_minimal()
+plot_stage1(res_no)
+```
+## some
+```{r}
+ipd_data_some <- read_csv("../data/generated_ipd_some.csv", show_col_types = FALSE)
+dd <- datadist(ipd_data_some)
+options(datadist = "dd")
+
+res_some <- run_ipd_ma(ipd_data_some, noise_sd = 1, knots = 3)
+# ggplot(res_some$data, aes(x = Age, y = Y, color = study)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "Observed data by Study",
+#        x = "Age", y = "Y") +
+#   theme_minimal()
+
+plot_stage1(res_some)
+```
+
+## many
+```{r}
+ipd_data_many <- read_csv("../data/generated_ipd_many.csv", show_col_types = FALSE)
+dd <- datadist(ipd_data_many)
+options(datadist = "dd")
+
+res_many <- run_ipd_ma(ipd_data_many, noise_sd = 1, knots = 3)
+# ggplot(res_many$data, aes(x = Age, y = Y, color = study)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "Observed data by Study",
+#        x = "Age", y = "Y") +
+#   theme_minimal()
+
+plot_stage1(res_many)
+```
+
