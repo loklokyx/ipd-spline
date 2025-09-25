@@ -6,32 +6,69 @@ source("data/random_data.r")
 
 # Data generation
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
+# # some overlap
+# input <- tribble(
+#   ~study, ~n, ~noise, ~Y, ~X1,
+#   "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
+#   "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
+#   "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
+#   "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
+#   "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
+#   "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
+# )
+
+# no overlap 40 and 60
 input <- tribble(
   ~study, ~n, ~noise, ~Y, ~X1,
-  "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
-  "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
+  "1", 300, 0, myfunc, "rnorm(n, 30, 1)",
+  "2", 300, 0, myfunc, "rnorm(n, 30, 2)",
   "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
-  "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
-  "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
+  "4", 300, 0, myfunc, "rnorm(n, 50, 4)",
+  "5", 300, 0, myfunc, "rnorm(n, 80, 5)",
   "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
 )
+
+# # many overlap
+# input <- tribble(
+#   ~study, ~n, ~noise, ~Y, ~X1,
+#   "1", 100, 0, myfunc, "rnorm(n, 40, 2)",
+#   "1", 100, 0, myfunc, "rnorm(n, 50, 2)",
+#   "1", 100, 0, myfunc, "rnorm(n, 60, 2)",
+#   "2", 100, 0, myfunc, "rnorm(n, 35, 4)",
+#   "2", 100, 0, myfunc, "rnorm(n, 50, 4)",
+#   "2", 100, 0, myfunc, "rnorm(n, 75, 4)",
+#   "3", 100, 0, myfunc, "rnorm(n, 35, 3)",
+#   "3", 100, 0, myfunc, "rnorm(n, 45, 3)",
+#   "3", 100, 0, myfunc, "rnorm(n, 55, 3)",
+#   "4", 100, 0, myfunc, "rnorm(n, 55, 4)",
+#   "4", 100, 0, myfunc, "rnorm(n, 65, 4)",
+#   "4", 100, 0, myfunc, "rnorm(n, 80, 3)",
+#   "5", 100, 0, myfunc, "rnorm(n, 65, 5)",
+#   "5", 100, 0, myfunc, "rnorm(n, 70, 5)",
+#   "5", 100, 0, myfunc, "rnorm(n, 75, 4)",
+#   "6", 100, 0, myfunc, "rnorm(n, 55, 5)",
+#   "6", 100, 0, myfunc, "rnorm(n, 70, 5)",
+#   "6", 100, 0, myfunc, "rnorm(n, 85, 3)"
+# )
 
 set.seed(2025)
 ipd_data <- generate_from_table(input) %>%
   rename(Age = X1) %>%
   mutate(Y = abs(Y), Study = as.factor(Study))
+# plot(Y~Age, col=Study,data=ipd_data)
 
 write_csv(ipd_data, "data/generated_ipd.csv")
 
 # Configuration - keep all settings together
 CONFIG <- list(
   data = ipd_data,
-  n_sim = 10,
-  knots_list = c(3, 4, 5),
+  n_sim = 1000,
+  knots_list = c(5, 4),
   stage2_knots_list = c(5),
   noise_sd = 2,
   include_meta_re = TRUE,
-  data_dir = "./data/",
+  include_meta_re = F,
+  setting_dir = "./data/simulated/",
   simulated_dir = "./data/simulated/"
 )
 
@@ -252,6 +289,6 @@ if (length(settings_list) > 0) {
   }
   
   # Save to CSV
-  write_csv(settings_df, paste0(CONFIG$data_dir, "simul_settings.csv"))
+  write_csv(settings_df, paste0(CONFIG$setting_dir, "simul_settings.csv"))
   cat("Setting saved!!!")
 }

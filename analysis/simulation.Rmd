@@ -78,6 +78,23 @@ for (i in seq_along(metrics_list2)) {
   metrics_list2[[i]]$method <- names(metrics_list2)[i]
 }
 ```
+
+```{r}
+my_knot = 5
+ddd <- metrics_list$pooled_knots3
+pred_str <- make_rcs(combined_data$Age, "Age", knots = my_knot)
+formula_obj <- as.formula(paste0("Y_true ~ ", pred_str))
+fit <- ols(formula_obj, data = ddd)
+ddd$Y_fit <- predict(fit)
+ddd %>%
+  select(Age, Y_true, Y_fit) %>%
+  pivot_longer(cols = starts_with("Y"), names_to = "Method", values_to = "Y") %>%
+  ggplot(aes(x = Age, y = Y, color = Method)) +
+  geom_line(size = 1) +
+  geom_vline(
+    xintercept = c(34.5, 40.7, 54, 68.1, 82.3), 
+    linetype = "dashed", color = "grey40")
+```
 # Summary of all
 ```{r}
 set_summary <- function(df_list, 
@@ -86,8 +103,12 @@ set_summary <- function(df_list,
                         prefix = NULL){
   full_df <- data.frame()
   for (name in names(df_list)) {
-    df <- df_list[[name]] %>%
-      group_by(method) %>%
+    df <- df_list[[name]]
+    
+    group_vars <- c("method", if ("knots" %in% names(df)) "knots" else NULL)
+    
+    df <- df %>%
+      group_by(across(all_of(group_vars))) %>%
       summarise(
         across(all_of(metrics),
                list(mean = ~round(mean(.x, na.rm = TRUE), dp),
@@ -127,9 +148,9 @@ df_all <- bind_rows(metrics_list) %>%
 df_all$base_method <- word(df_all$method, 1, sep = "_")
 df_all$knots <- word(df_all$method, 2, sep = "_")
 
-ggplot(df_all, aes(x = Age, y = metric_value, color = base_method, group = method)) +
+ggplot(df_all, aes(x = Age, y = metric_value, color = base_method)) +
   geom_line(size = 1) +
-  facet_grid(metric_name ~ knots) +
+  facet_grid(metric_name ~ knots, scales = "free") +
   theme_minimal() +
   labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
   theme(
@@ -139,12 +160,12 @@ ggplot(df_all, aes(x = Age, y = metric_value, color = base_method, group = metho
   )
 ```
 ### CI True Value
-```{r, fig.height=10, fig.width=5}
-ggplot(df_all, aes(x = Age, y = mean_pred, color = base_method, fill = base_method, group = method)) +
+```{r, fig.height=7, fig.width=5}
+ggplot(df_all, aes(x = Age, y = mean_pred, color = base_method, fill = base_method, group)) +
   geom_line(size = 1) +
   geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
   geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1, scales = "free_y") +
+  facet_wrap(~knots, ncol = 1) +
   theme_minimal() +
   labs(
     x = "Age",
@@ -170,9 +191,9 @@ df_all2 <- bind_rows(metrics_list2) %>%
 df_all2$base_method <- word(df_all2$method, 1, sep = "_")
 df_all2$knots <- word(df_all2$method, 2, sep = "_")
 
-ggplot(df_all2, aes(x = Age, y = metric_value, color = base_method, group = method)) +
+ggplot(df_all2, aes(x = Age, y = metric_value, color = base_method)) +
   geom_line(size = 1) +
-  facet_grid(metric_name ~ knots) +
+  facet_grid(metric_name ~ knots, scales = "free_y") +
   theme_minimal() +
   labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
   theme(
@@ -181,13 +202,13 @@ ggplot(df_all2, aes(x = Age, y = metric_value, color = base_method, group = meth
     strip.background = element_rect(fill = "white")
   )
 ```
-### hist plot
+### CI True Value
 ```{r, fig.height=7, fig.width=5}
-ggplot(df_all2, aes(x = Age, y = mean_pred, color = base_method, fill = base_method, group = method)) +
+ggplot(df_all2, aes(x = Age, y = mean_pred, color = base_method, fill = base_method)) +
   geom_line(size = 1) +
   geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
   geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1, scales = "free_y") +
+  facet_wrap(~knots, ncol = 1) +
   theme_minimal() +
   labs(
     x = "Age",
@@ -198,7 +219,7 @@ ggplot(df_all2, aes(x = Age, y = mean_pred, color = base_method, fill = base_met
   ) +
   theme(
     legend.position = "bottom",
-    panel.spacing = unit(1.5, "lines"),
+    panel.spacing = unit(1, "lines"),
     strip.background = element_rect(fill = "white")
   )
 ```
