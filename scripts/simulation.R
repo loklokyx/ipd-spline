@@ -3,6 +3,7 @@ library(tidyverse)
 library(rms)
 library(lme4)
 source("data/random_data.r")
+source("scripts/helpers.R")
 
 # Data generation
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
@@ -74,35 +75,6 @@ CONFIG <- list(
 
 dd <- datadist(CONFIG$data)
 options(datadist = "dd")
-
-# Helper functions
-make_quantiles <- function(x, knot, dp = 2) {
-  quantile_map <- list(
-    '3' = c(0.10, 0.50, 0.90),
-    '4' = c(0.05, 0.35, 0.65, 0.95),
-    '5' = c(0.05, 0.275, 0.50, 0.725, 0.95)
-  )
-  
-  probs <- quantile_map[[as.character(knot)]]
-  if (is.null(probs)) return(NULL)
-  
-  round(quantile(x, probs = probs, na.rm = TRUE), dp)
-}
-
-make_rcs_formula <- function(var = "Age", quantiles = NULL) {
-  if (is.null(quantiles)) return(sprintf("rcs(%s)", var))
-  sprintf("rcs(%s, c(%s))", var, paste(quantiles, collapse = ", "))
-}
-
-get_max_knots <- function(n) {
-  if (n < 50) return(3)
-  if (n < 200) return(4)
-  return(5)
-}
-
-is_valid_knot <- function(n, knot) {
-  knot <= get_max_knots(n)
-}
 
 # Get valid knot combinations
 get_valid_combinations <- function(knots_list) {

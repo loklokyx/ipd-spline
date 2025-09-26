@@ -12,6 +12,7 @@ library(splines)
 library(rms)
 library(lme4)
 library(ggplot2)
+source("../scripts/helpers.R")
 ```
 
 ```{r}
@@ -37,41 +38,16 @@ noise_sd <- 2
 set.seed(10)
 ipd_data <- ipd_data %>%
   mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd))
-```
-
-```{r}
 dd <- datadist(ipd_data)
 options(datadist = "dd")
-
-make_rcs <- function(data, variable = "X", knots = NULL, n = NULL, dp = 1) {
-  quan <- list(
-    '3' = c(0.10, 0.50, 0.90),
-    '4' = c(0.05, 0.35, 0.65, 0.95),
-    '5' = c(0.05, 0.275, 0.50, 0.725, 0.95),
-    '6' = c(0.05, 0.23, 0.41, 0.59, 0.77, 0.95),
-    '7' = c(0.025, 0.1833, 0.3417, 0.50, 0.6583, 0.8167, 0.975)
-  )
-  
-  if (!is.null(n)) {
-    knot_str <- paste(n, collapse = ", ")
-    return(sprintf("rcs(%s, %s)", variable, knot_str))
-  }
-  
-  if (!is.null(knots)) { 
-    preset_str <- as.character(knots) 
-    if (preset_str %in% names(quan)) { 
-      knot_values <- quantile(data, probs = quan[[preset_str]], na.rm = TRUE) 
-      knot_str <- paste(round(knot_values, dp), collapse = ", ") 
-      return(sprintf("rcs(%s, c(%s))", variable, knot_str)) 
-    } 
-  }
-  
-  return(sprintf("rcs(%s)", variable))
-}
 ```
 
 ```{r}
-tapply(ipd_data$Age, ipd_data$Study, FUN = function(x) make_rcs(x, variable = "Age", knots = 3))
+tapply(ipd_data$Age, ipd_data$Study, FUN = function(x) {
+  quan <- make_quantiles(x, 3)
+  make_rcs_formula("Age", quan)
+})
+
 plot(ipd_data$Y ~ ipd_data$Age, col=ipd_data$Study)
 ```
 # Stage 1
@@ -80,7 +56,9 @@ plot(ipd_data$Y ~ ipd_data$Age, col=ipd_data$Study)
 studies <- unique(ipd_data$Study)
 study_models <- setNames(lapply(studies, function(s) {
   study_data <- subset(ipd_data, Study == s)
-  pred_str <- make_rcs(study_data$Age, "Age", knots = 3)
+  
+  quan <- make_quantiles(study_data$Age, 3)
+  pred_str <- make_rcs_formula("Age", quan)
   formula_obj <- as.formula(paste0("Y ~ ", pred_str))
   model <- ols(formula_obj, data = study_data)
   
@@ -125,7 +103,6 @@ residuals_list <- lapply(study_models, function(sm) {
 })
 residuals_df <- do.call(rbind, residuals_list)
 
-
 ggplot(residuals_df, aes(x = fitted, y = residuals)) +
   geom_point(alpha = 0.6) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
@@ -157,7 +134,7 @@ plot(combined_data$Y~combined_data$Age, col=combined_data$study)
 ```
 ```{r}
 combined_data$study <- 1
-combined_pred_str <- make_rcs(combined_data$Age, "Age", knots = 3)
+combined_pred_str <- make_rcs_formula("Age", make_quantiles(combined_data$Age, 3))
 pooled_formula <- as.formula(paste0("Y ~ ", combined_pred_str))
 pooled_model <- ols(pooled_formula, data = combined_data)
 
@@ -181,8 +158,8 @@ meta_data$Y_pred <- predict(meta_model, newdata = meta_data, re.form = NA)
 ggplot() +
   geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.3) +
 
-  geom_line(data = pred_ori_data, aes(x = Age, y = Y, color = study), 
-            alpha = 0.5) +
+  # geom_line(data = pred_ori_data, aes(x = Age, y = Y, color = study), 
+  #           alpha = 0.5) +
 
   geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
   geom_line(data = common_grid1, aes(x = Age, y = Y), 

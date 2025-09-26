@@ -9,9 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
-library(tidyr)
-library(patchwork)
-library(metafor)
+library(rms)
+source("../scripts/helpers.R")
 ```
 
 # Read Simulation Data
@@ -82,7 +81,7 @@ for (i in seq_along(metrics_list2)) {
 ```{r}
 my_knot = 5
 ddd <- metrics_list$pooled_knots3
-pred_str <- make_rcs(combined_data$Age, "Age", knots = my_knot)
+pred_str <- make_rcs_formula("Age", make_quantiles(combined_data$Age, my_knot))
 formula_obj <- as.formula(paste0("Y_true ~ ", pred_str))
 fit <- ols(formula_obj, data = ddd)
 ddd$Y_fit <- predict(fit)
@@ -90,42 +89,13 @@ ddd %>%
   select(Age, Y_true, Y_fit) %>%
   pivot_longer(cols = starts_with("Y"), names_to = "Method", values_to = "Y") %>%
   ggplot(aes(x = Age, y = Y, color = Method)) +
-  geom_line(size = 1) +
+  geom_line(linewidth = 1) +
   geom_vline(
     xintercept = c(34.5, 40.7, 54, 68.1, 82.3), 
     linetype = "dashed", color = "grey40")
 ```
 # Summary of all
 ```{r}
-set_summary <- function(df_list, 
-                        metrics = c("bias", "variance", "mse"), 
-                        dp = 6,
-                        prefix = NULL){
-  full_df <- data.frame()
-  for (name in names(df_list)) {
-    df <- df_list[[name]]
-    
-    group_vars <- c("method", if ("knots" %in% names(df)) "knots" else NULL)
-    
-    df <- df %>%
-      group_by(across(all_of(group_vars))) %>%
-      summarise(
-        across(all_of(metrics),
-               list(mean = ~round(mean(.x, na.rm = TRUE), dp),
-                    sd   = ~round(sd(.x, na.rm = TRUE), dp),
-                    min  = ~round(min(.x), dp),
-                    max  = ~round(max(.x), dp)),
-               .names = "{.fn}_{.col}"),
-        .groups = "drop"
-      )
-    if (!is.null(prefix)) {
-      df <- df %>% mutate(method = paste0(method, "_", prefix))
-    }
-    full_df <- rbind(full_df, df)
-  }
-  return(full_df)
-}
-
 metrics <- c("bias", "variance", "mse")
 summ <- set_summary(metrics_list, metrics = metrics, prefix = 'n1800')
 summ2 <- set_summary(metrics_list2, metrics = metrics, prefix = 'n600')

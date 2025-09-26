@@ -12,6 +12,7 @@ library(splines)
 library(rms)
 library(lme4)
 library(ggplot2)
+source("../scripts/helpers.R")
 ```
 
 # Extrapolate
@@ -106,7 +107,7 @@ ipd_data_many <- read_csv("../data/generated_ipd_many.csv", show_col_types = FAL
 dd <- datadist(ipd_data_many)
 options(datadist = "dd")
 
-res_many <- run_ipd_ma(ipd_data_many, noise_sd = 1, knots = 3)
+res_many <- run_ipd_ma(ipd_data_many, noise_sd = 2, knots = 3)
 # ggplot(res_many$data, aes(x = Age, y = Y, color = study)) +
 #   geom_point(alpha = 0.6) +
 #   labs(title = "Observed data by Study",
@@ -114,5 +115,9 @@ res_many <- run_ipd_ma(ipd_data_many, noise_sd = 1, knots = 3)
 #   theme_minimal()
 
 plot_stage1(res_many)
+```
+## stage 2
+```{r}
+
 ```
 
