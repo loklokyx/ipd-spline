@@ -121,7 +121,6 @@ df_all$knots <- word(df_all$method, 2, sep = "_")
 ggplot(df_all, aes(x = Age, y = metric_value, color = base_method)) +
   geom_line(size = 1) +
   facet_grid(metric_name ~ knots, scales = "free") +
-  theme_minimal() +
   labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
   theme(
     legend.position = "bottom",
@@ -135,8 +134,7 @@ ggplot(df_all, aes(x = Age, y = mean_pred, color = base_method, fill = base_meth
   geom_line(size = 1) +
   geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
   geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1) +
-  theme_minimal() +
+  facet_wrap(~knots, ncol = 1) 
   labs(
     x = "Age",
     y = "Predicted Y",
@@ -163,8 +161,7 @@ df_all2$knots <- word(df_all2$method, 2, sep = "_")
 
 ggplot(df_all2, aes(x = Age, y = metric_value, color = base_method)) +
   geom_line(size = 1) +
-  facet_grid(metric_name ~ knots, scales = "free_y") +
-  theme_minimal() +
+  facet_grid(metric_name ~ knots, scales = "free_y")
   labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
   theme(
     legend.position = "bottom",
@@ -179,7 +176,6 @@ ggplot(df_all2, aes(x = Age, y = mean_pred, color = base_method, fill = base_met
   geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
   geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
   facet_wrap(~knots, ncol = 1) +
-  theme_minimal() +
   labs(
     x = "Age",
     y = "Predicted Y",

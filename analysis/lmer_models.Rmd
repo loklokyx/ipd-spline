@@ -92,7 +92,6 @@ ggplot(plot_data, aes(x = Age, y = Predicted, color = Prediction_Type)) +
   geom_line(data = true_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
   facet_wrap(~Prediction_Type, scales = "fixed") +
   labs(title = "Comparison of Predictions by re.form",
-       x = "Age", y = "Predicted Y") +
-  theme_minimal()
+       x = "Age", y = "Predicted Y")
 ```
 

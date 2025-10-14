@@ -1,3 +1,23 @@
+library(ggplot2)
+
+# Define a custom theme
+my_theme <- theme_minimal() +
+  theme(
+    axis.text.x  = element_text(size = 14),           # X-axis ticks
+    axis.text.y  = element_text(size = 14),           # Y-axis ticks
+    axis.title.x = element_text(size = 16, face = "bold"), # X-axis label
+    axis.title.y = element_text(size = 16, face = "bold"), # Y-axis label
+    plot.title   = element_text(size = 18, face = "bold"), # Main title
+    plot.subtitle = element_text(size = 16),                # Subtitle
+    plot.caption  = element_text(size = 12),                # Caption
+    legend.title  = element_text(size = 14, face = "bold"), # Legend title
+    legend.text   = element_text(size = 12),                # Legend labels
+    strip.text    = element_text(size = 14)
+  )
+
+# Apply it globally
+theme_set(my_theme)
+
 make_quantiles <- function(x, knot, dp = 4) {
   quantile_map <- list(
     '3' = c(0.10, 0.50, 0.90),
@@ -82,36 +102,35 @@ is_same_knots <- function(row) {
   length(unique(study_lengths)) == 1   # TRUE if all equal, FALSE if not
 }
 # Base plot template
-base_plot <- function(df, metric_name, fix_y = TRUE) {
+base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1) {
+  quan <- make_quantiles(df$Age, df$stage2_knots[1])
   df_sub <- df %>% filter(metric_name == !!metric_name)
   
   ggplot(df_sub, aes(x = Age, y = metric_value, color = line_id)) +
     geom_line(linewidth = 1) +
-    geom_vline(xintercept = quantiles_numeric, linetype = "dashed", color = "grey40") +
-    facet_wrap(~rank_id, ncol = 2, 
-               scales = if (fix_y) "fixed" else "free_y") +
-    theme_minimal() +
+    geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
+    facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
     labs(
       x = "Age",
       y = metric_name,
-      color = "Method",
-      title = metric_name
+      color = "Method"
     ) +
+    guides(color = guide_legend(ncol = legend_ncol)) +
     theme(
       legend.position = "bottom",
-      strip.background = element_rect(fill = "white"),
-      strip.text = element_text(size = 12)
+      strip.background = element_rect(fill = "white")
     )
 }
 
-base_plot_CI <- function(df, ncol, fix_y = TRUE) {
+base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1) {
+  quan <- make_quantiles(df$Age, df$stage2_knots[1])
+
   ggplot(df, aes(x = Age, y = mean_pred, color = line_id, fill = line_id, group = line_id)) +
     geom_line(linewidth = 1) +
     geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
     geom_line(aes(y = Y_true), color = "black", linetype = "longdash") +
-    geom_vline(xintercept = quantiles_numeric, linetype = "dashed", color = "grey40") +
+    geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
     facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
-    theme_minimal() +
     labs(
       x = "Age",
       y = "Predicted Y",
@@ -119,10 +138,10 @@ base_plot_CI <- function(df, ncol, fix_y = TRUE) {
       fill = "Method",
       title = "Predicted Values with Confidence Intervals by Rank"
     ) +
+    guides(color = guide_legend(ncol = legend_ncol)) +
     theme(
       legend.position = "bottom",
       strip.background = element_rect(fill = "white"),
-      strip.text = element_text(size = 12),
       panel.spacing = unit(1.5, "lines")
     )
 }
