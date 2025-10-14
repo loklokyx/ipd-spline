@@ -18,7 +18,6 @@ file_dir <- "../data/simulated_no/"
 simul_settings <- read_csv(paste0(file_dir, "simul_settings.csv"), show_col_types = FALSE)
 # Exclude same knots file
 study_cols <- grep("^Study", names(simul_settings), value = TRUE)
-
 # Apply filter
 simul_settings <- simul_settings[!apply(simul_settings, 1, is_same_knots), ]
 ```
@@ -29,15 +28,15 @@ exclude_cols <- c("Stage2",
                   grep("^Study", names(simul_settings), value = TRUE), 
                   grep("^Rank_", names(simul_settings), value = TRUE))
 
-top_n <- 2
-worst_n <- 2
+top_n <- 1
+worst_n <- 1
 rank_all <- make_rank_all(simul_settings, top_n, worst_n)
 
 rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
 # Factor with desired order
 methods <- unique(rank_all$rank_method)
 lvls <- c(paste0("top", 1:top_n), paste0("worst", worst_n:1))
-rank_all %>% select(-all_of(exclude_cols))
+rank_all %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
 ```{r}
@@ -60,7 +59,11 @@ for (i in 1:nrow(rank_all)) {
 names(sim_data_no) <- rank_all$Name
 ```
 ```{r}
-plot(Y~Age, col=Study, data=sim_data_no[[1]])
+ggplot(sim_data_no[[1]]) +
+  geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape=1) +
+  labs(title = "Simulated True Data (No Overlap)", x = "Age", y = "Y",
+       color = "Study")
+  # facet_wrap(~Study, scales = "fixed")
 ```
 # Calculate Metrics Reduce df
 ```{r}
@@ -76,14 +79,14 @@ all_metrics_no <- lapply(sim_data_no, function(df) {
 ```{r}
 metrics <- c("mse", "variance", "bias")
 # Apply summary to all_metrics_no
-summary_all <- set_summary(all_metrics_no, metrics = metrics)
-summary_all
+summary_all_no <- set_summary(all_metrics_no, metrics = metrics)
+summary_all_no
 ```
 # Bias, Variance, MSE plot
 ## n=1800
 ```{r}
-df_all <- bind_rows(all_metrics_some)
-df_plot <- df_all %>%
+df_all_no <- bind_rows(all_metrics_no)
+df_plot_no <- df_all_no %>%
   filter(
     method == rank_method,
     method != "meta_re"
@@ -99,12 +102,12 @@ df_plot <- df_all %>%
   )
 ```
 ### line plot
-```{r, fig.height=8, fig.width=8}
-plots <- lapply(metrics, function(m) base_plot(df_plot, m))
-plots
+```{r}
+plots_no <- lapply(metrics, function(m) base_plot(df_plot_no, m, ncol=2, legend_ncol=2))
+plots_no
 ```
 ### CI True Value
-```{r, fig.height=8, fig.width=8}
-plot_CI <- base_plot_CI(df_plot, ncol = 2)
-plot_CI
+```{r}
+plot_CI_no <- base_plot_CI(df_plot_no, ncol = 2, legend_ncol=2)
+plot_CI_no
 ```

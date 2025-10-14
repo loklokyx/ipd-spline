@@ -13,13 +13,14 @@ source("data/random_data.r")
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
 input <- tribble(
   ~study, ~n, ~noise,     ~Y,         ~X1,
-  "1", 100, 0, myfunc, "rnorm(n, 35, 1)",
-  "2", 100, 0, myfunc, "rnorm(n, 40, 2)",
-  "3", 100, 0, myfunc, "rnorm(n, 50, 3)",
-  "4", 100, 0, myfunc, "rnorm(n, 60, 4)",
-  "5", 100, 0, myfunc, "rnorm(n, 70, 5)",
-  "6", 100, 0, myfunc, "rnorm(n, 80, 5)",
+  "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
+  "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
+  "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
+  "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
+  "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
+  "6", 300, 0, myfunc, "rnorm(n, 80, 5)",
 )
+
 
 set.seed(2025)
 ipd_data <- generate_from_table(input)
