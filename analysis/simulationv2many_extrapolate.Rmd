@@ -1,0 +1,141 @@
+---
+title: "Simulation Extrapolation Analysis Version 2"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(rms)
+library(patchwork)
+source("../scripts/helpers.R")
+```
+# Read Settings
+```{r}
+file_dir <- "../data/extrapolate/simulated_many/"
+simul_settings <- read_csv(paste0(file_dir, "simul_settings.csv"), show_col_types = FALSE)
+# Exclude same knots file
+study_cols <- grep("^Study", names(simul_settings), value = TRUE)
+# Apply filter
+# simul_settings <- simul_settings[!apply(simul_settings, 1, is_same_knots), ]
+```
+
+```{r}
+t1 <- dnorm(30,30,1)
+t2 <- dbeta(1/2,20,20)
+b=t2/t1
+
+curve(dnorm(x,30,1), from =30-b, to = 30+b)
+curve(dbeta((x-30)/b+0.5,20,20)/b, from =30-b, to =30+b,add=T,col='red')
+```
+
+
+
+```{r}
+ggplot(simul_settings, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
+```
+
+
+
+```{r}
+exclude_cols <- c("Stage2", 
+                  grep("^MSE", names(simul_settings), value = TRUE), 
+                  grep("^Study", names(simul_settings), value = TRUE), 
+                  grep("^Rank_", names(simul_settings), value = TRUE))
+
+top_n <- 1
+worst_n <- 1
+rank_all <- make_rank_all(simul_settings, top_n, worst_n)
+
+rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
+# Factor with desired order
+methods <- unique(rank_all$rank_method)
+lvls <- c(paste0("top", 1:top_n), paste0("worst", worst_n:1))
+rank_all %>% dplyr::select(-all_of(exclude_cols))
+```
+# Read Simulation Data
+```{r}
+sim_data_many <- list()
+for (i in 1:nrow(rank_all)) {
+  df_row <- rank_all[i,]
+  filename <- paste0(file_dir, df_row$Name, ".csv")
+  sim_df <- read_csv(filename, show_col_types = FALSE)
+  stage2_knots_str <- df_row$Stage2
+
+  sim_data_many[[i]] <- sim_df %>%
+    mutate(
+      stage2_quantiles_str = stage2_knots_str,
+      stage2_knots = length(knots_to_numeric(stage2_knots_str)),
+      study_knots = word(df_row$Name, 1, sep = "_"),
+      rank_method = df_row$rank_method,
+      rank_id = df_row$rank_id
+    )
+}
+names(sim_data_many) <- rank_all$Name
+```
+```{r}
+ggplot(sim_data_many[[1]]) +
+  geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape=1) +
+  labs(title = "Simulated True Data (Many Overlap)", x = "Age", y = "Y",
+       color = "Study") +
+  facet_wrap(~Study, scales = "fixed")
+```
+
+# Calculate Metrics Reduce df
+```{r}
+all_metrics_many <- lapply(sim_data_many, function(df) {
+  lapply(methods, function(m) {
+    df_filtered <- df %>% filter(method == m)
+    calculate_metrics(df_filtered, level = 0.95) %>%
+      mutate(method = m)
+  }) %>% bind_rows()
+})
+```
+# Summary of all
+```{r}
+metrics <- c("mse", "variance", "bias")
+# Apply summary to all_metrics_many
+summary_all_many <- set_summary(all_metrics_many, metrics = metrics)
+summary_all_many
+```
+# Bias, Variance, MSE plot
+## n=1800
+```{r, fig.height=10, fig.width=7}
+df_all_many <- bind_rows(all_metrics_many)
+df_plot_many <- df_all_many %>%
+  filter(
+    method == rank_method,
+    method != "meta_re"
+  ) %>%
+  mutate(
+    line_id = paste0(method, "_", study_knots),
+    rank_id = factor(rank_id, levels = lvls)  # enforce order
+  ) %>%
+  pivot_longer(
+    cols = all_of(metrics),
+    names_to = "metric_name",
+    values_to = "metric_value"
+  )
+```
+### line plot
+```{r, fig.width=10}
+plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, 
+                                                    ncol=2, legend_ncol=4))
+```
+```{r, fig.width=14}
+plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, 
+                                                    ncol=1, legend_ncol=2))
+wrap_plots(
+  list(plots_many[[1]], plots_many[[2]], plots_many[[3]]),
+  ncol=3,
+)
+```
+
+### CI True Value
+```{r, fig.width=12}
+plot_CI_many <- base_plot_CI(df_plot_many, ncol = 2, legend_ncol=4)
+plot_CI_many
+```
