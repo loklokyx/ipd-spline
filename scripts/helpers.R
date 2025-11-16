@@ -122,13 +122,19 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1) {
     )
 }
 
-base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1) {
+base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1, 
+                         jitter_width = 0, jitter_height = 0, show_jitter = FALSE) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
 
-  ggplot(df, aes(x = Age, y = mean_pred, color = line_id, fill = line_id, group = line_id)) +
+  p <- ggplot(df, aes(x = Age, y = mean_pred, color = line_id, fill = line_id, group = line_id))
+  
+  if (show_jitter) {
+    p <- p + geom_jitter(aes(y = Y_true), color = "black", alpha = 0.1, shape = 1,
+                         width = jitter_width, height = jitter_height)
+  }
+  
+  p <- p + geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
     geom_line(linewidth = 1) +
-    geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
-    geom_line(aes(y = Y_true), color = "black", linetype = "longdash") +
     geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
     facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
     labs(
@@ -144,6 +150,12 @@ base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1) {
       strip.background = element_rect(fill = "white"),
       panel.spacing = unit(1.5, "lines")
     )
+  
+  if (!show_jitter) {
+    p <- p + geom_line(aes(y = Y_true), color = "black", linetype = "longdash")
+  }
+  
+  return(p)
 }
 
 set_summary <- function(df_list, 
@@ -206,3 +218,72 @@ make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
   
   return(rank_all)
 }
+
+make_unique_by_precision <- function(x, digits = 5) {
+  # Round first to the desired digits
+  x <- round(x, digits)
+  
+  # Small offset based on precision (e.g. digits=5 → 1e-6)
+  offset <- 10^(-(digits + 1))
+  
+  # Order to preserve original sequence
+  ord <- order(x)
+  x_sorted <- x[ord]
+  
+  # Handle duplicates
+  dup_index <- ave(x_sorted, x_sorted, FUN = seq_along)
+  
+  # Add incremental offset to duplicates
+  x_sorted <- x_sorted + (dup_index - 1) * offset
+  
+  # Revert to original order
+  x_final <- x_sorted[order(ord)]
+  
+  return(x_final)
+}
+
+
+OVERLAP_INPUTS <- list(
+  
+  simulated_some = tribble(
+    ~study, ~n, ~noise, ~Y, ~X1,
+    "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
+    "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
+    "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
+    "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
+    "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
+    "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
+  ),
+  
+  simulated_no = tribble(
+    ~study, ~n, ~noise, ~Y, ~X1,
+    "1", 300, 0, myfunc, "rnorm(n, 30, 1)",
+    "2", 300, 0, myfunc, "rnorm(n, 30, 2)",
+    "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
+    "4", 300, 0, myfunc, "rnorm(n, 50, 4)",
+    "5", 300, 0, myfunc, "rnorm(n, 80, 5)",
+    "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
+  ),
+  
+  simulated_many = tribble(
+    ~study, ~n, ~noise, ~Y, ~X1,
+    "1", 100, 0, myfunc, "rnorm(n, 40, 2)",
+    "1", 100, 0, myfunc, "rnorm(n, 50, 2)",
+    "1", 100, 0, myfunc, "rnorm(n, 60, 2)",
+    "2", 100, 0, myfunc, "rnorm(n, 35, 4)",
+    "2", 100, 0, myfunc, "rnorm(n, 50, 4)",
+    "2", 100, 0, myfunc, "rnorm(n, 75, 4)",
+    "3", 100, 0, myfunc, "rnorm(n, 35, 3)",
+    "3", 100, 0, myfunc, "rnorm(n, 45, 3)",
+    "3", 100, 0, myfunc, "rnorm(n, 55, 3)",
+    "4", 100, 0, myfunc, "rnorm(n, 55, 4)",
+    "4", 100, 0, myfunc, "rnorm(n, 65, 4)",
+    "4", 100, 0, myfunc, "rnorm(n, 80, 3)",
+    "5", 100, 0, myfunc, "rnorm(n, 65, 5)",
+    "5", 100, 0, myfunc, "rnorm(n, 70, 5)",
+    "5", 100, 0, myfunc, "rnorm(n, 75, 4)",
+    "6", 100, 0, myfunc, "rnorm(n, 55, 5)",
+    "6", 100, 0, myfunc, "rnorm(n, 70, 5)",
+    "6", 100, 0, myfunc, "rnorm(n, 85, 3)"
+  )
+)

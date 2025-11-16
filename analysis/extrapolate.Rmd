@@ -23,22 +23,28 @@ run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
   set.seed(10)
   ipd_data <- data %>%
     mutate(study = as.factor(study)) %>%
-    mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd))
-  
+    mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd)) %>%
+    group_by(study) %>%
+    mutate(Age = make_unique_by_precision(Age, digits = 5)) %>%
+    ungroup()
   # Fit study-specific spline models
   studies <- unique(ipd_data$study)
-  study_models <- lapply(studies, function(s) {
+  pred_data <- data.frame()
+  
+  for (s_idx in seq_along(studies)) {
+    s <- study_ids[s_idx]
     study_data <- subset(ipd_data, study == s)
+    
     pred_str <- make_rcs_formula("Age", make_quantiles(study_data$Age, knots))
     formula_obj <- as.formula(paste0("Y ~ ", pred_str))
     model <- lm(formula_obj, data = study_data)
     
-    # Separate calls for SE and CI
+    # Predict on all data points (for pointwise combining)
     newdata <- data.frame(Age = ipd_data$Age)
     pred_se <- predict(model, newdata = newdata, se.fit = TRUE)
     pred_ci <- predict(model, newdata = newdata, interval = "confidence")
     
-    data.frame(
+    temp <- data.frame(
       study     = s,
       Age       = ipd_data$Age,
       Y         = pred_se$fit,
@@ -49,10 +55,8 @@ run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
       fitted    = fitted(model),
       residuals = residuals(model)
     )
-  })
-  
-  pred_data <- do.call(rbind, study_models)
-  
+    pred_data <- rbind(pred_data, temp)
+  }
   return(list(
     data = ipd_data,
     pred = pred_data
@@ -174,7 +178,7 @@ p_meta_no <- ggplot() +
               aes(x = Age, ymin = lower, ymax = upper),
               fill = "red", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_no$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Meta (no)", x = "Age", y = "Predicted Y") +
+  labs(title = "Meta (no)", x = "Age", y = "Predicted Y")
   # facet_wrap(~ study)
 
 p_meta_some <- ggplot() +
@@ -185,8 +189,7 @@ p_meta_some <- ggplot() +
               aes(x = Age, ymin = lower, ymax = upper),
               fill = "red", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_some$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Meta (some)", x = "Age", y = "Predicted Y") +
-  # facet_wrap(~ study)
+  labs(title = "Meta (some)", x = "Age", y = "Predicted Y")
 
 p_meta_many <- ggplot() +
   geom_point(data = d_many, aes(x = Age, y = Y, color = study), alpha = 0.5) +
@@ -196,8 +199,7 @@ p_meta_many <- ggplot() +
               aes(x = Age, ymin = lower, ymax = upper),
               fill = "red", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_many$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Meta (many)", x = "Age", y = "Predicted Y") +
-  # facet_wrap(~ study)
+  labs(title = "Meta (many)", x = "Age", y = "Predicted Y")
 ```
 
 ```{r}
@@ -209,8 +211,7 @@ p_pooled_no <- ggplot() +
             aes(x = Age, ymin = lower, ymax = upper),
             fill = "blue", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_no$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Pooled (no)", x = "Age", y = "Predicted Y") +
-  # facet_wrap(~ study)
+  labs(title = "Pooled (no)", x = "Age", y = "Predicted Y")
 
 p_pooled_some <- ggplot() +
   geom_point(data = d_some, aes(x = Age, y = Y, color = study), alpha = 0.5) +
@@ -220,8 +221,7 @@ p_pooled_some <- ggplot() +
             aes(x = Age, ymin = lower, ymax = upper),
             fill = "blue", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_some$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Pooled (some)", x = "Age", y = "Predicted Y") +
-  # facet_wrap(~ study)
+  labs(title = "Pooled (some)", x = "Age", y = "Predicted Y")
 
 p_pooled_many <- ggplot() +
   geom_point(data = d_many, aes(x = Age, y = Y, color = study), alpha = 0.5) +
@@ -231,8 +231,7 @@ p_pooled_many <- ggplot() +
             aes(x = Age, ymin = lower, ymax = upper),
             fill = "blue", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_many$Age, knot = 5), linetype = "dashed") +
-  labs(title = "Pooled (many)", x = "Age", y = "Predicted Y") +
-  # facet_wrap(~ study)
+  labs(title = "Pooled (many)", x = "Age", y = "Predicted Y")
 ```
 
 ### Each Method
@@ -253,6 +252,24 @@ p_meta_many + p_pooled_many
 (p_meta_no + p_meta_some + p_meta_many) / (p_pooled_no + p_pooled_some + p_pooled_many)
 ```
 
+```{r, fig.width=14}
+wrap_plots(
+  c(plots_no[1], plots_some[1], plots_many[1],
+    plots_no[2], plots_some[2], plots_many[2],
+    plots_no[3], plots_some[3], plots_many[3]),
+  ncol = 3
+)
+
+# wrap_plots(
+#   c(plots_no[1:3], plots_some[1:3], plots_many[1:3]), 
+#   ncol = 3
+# )
+```
+
+```{r, fig.width=14}
+wrap_plots(c(plot_CI_no, plot_CI_some, plot_CI_many), ncol = 3)
+```
+
 ## func
 ```{r}
 run_pooled <- function(pred_data, knots = 5, weight_fun = NULL) {
@@ -269,15 +286,24 @@ run_meta_fixed <- function(pred_data, weight_fun = NULL) {
   meta_formula <- as.formula(paste0("Y ~ ", pred_str, " + (1 | study)"))
   meta_model <- lmer(meta_formula, weights = weight, data = d)
   
-  # pred <- predict(meta_model, newdata = d, re.form = NA, se.fit = TRUE)
-  # d$Y <- pred$fit
-  # d$SE <- pred$se.fit
+  pred <- predict(meta_model, newdata = d, re.form = NA, se.fit = TRUE)
+  d$Y <- pred$fit
+  sigma_hat <- summary(meta_model)$sigma
+
+  # d$SE <- sigma_hat / sqrt(d$weight)
+  # combine_pointwise(d, weight_fun = weight_fun)
 
   # approximate SE using residual sigma and weights
-  d$Y <- predict(meta_model, newdata = d, re.form = NA)
-  sigma_hat <- summary(meta_model)$sigma
-  d$SE <- sigma_hat / sqrt(d$weight)
+  # Get weights for prediction points
+  pred_with_weights <- d %>%
+    group_by(Age) %>%
+    summarise(mean_weight = mean(weight), .groups = "drop")
   
+  d <- d %>%
+    left_join(pred_with_weights, by = "Age") %>%
+    mutate(SE = sigma_hat / sqrt(mean_weight))
+  
+  # Combine pointwise
   combine_pointwise(d, weight_fun = weight_fun)
 }
 
