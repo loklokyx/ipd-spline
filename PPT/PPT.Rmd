@@ -1,0 +1,548 @@
+---
+title: "PPT Images"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(rms)
+library(lme4)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(tidyverse)
+library(gganimate)
+source("../scripts/helpers.R")
+theme_set(my_theme)
+```
+
+```{r}
+set.seed(2026)
+
+n_studies <- 4
+participants <- c(10, 15, 12, 18)
+
+traditional <- tibble(
+  Study = paste0("Study ", 1:n_studies),
+  Effect = c(0.5, 0.7, 0.6, 0.8),
+  SE = c(0.1, 0.12, 0.09, 0.11)
+)
+
+ipd <- bind_rows(lapply(1:n_studies, function(i) {
+  tibble(Study = paste0("Study ", i),
+         Effect = rnorm(participants[i], mean = traditional$Effect[i], sd = traditional$SE[i]))
+}))
+
+pooled_trad <- sum(traditional$Effect / traditional$SE^2) / sum(1 / traditional$SE^2)
+pooled_se_trad <- 1 / sqrt(sum(1 / traditional$SE^2))
+
+pooled_ipd <- mean(ipd$Effect)
+pooled_se_ipd <- sd(ipd$Effect) / sqrt(nrow(ipd))
+
+y_limits <- round(c(min(traditional$Effect), max(traditional$Effect)), 1) + c(-0.1,0.1)
+
+p_trad <-  ggplot(traditional, aes(Study, Effect)) +
+  geom_point(aes(color = "Study mean"), size = 4) +
+  geom_errorbar(aes(ymin = Effect - SE, ymax = Effect + SE, color = "Study mean"), width = 0.2, size = 1) +
+  geom_hline(aes(yintercept = pooled_trad, color = "Pooled effect"),
+             linetype = "dashed", size = 1.5) +
+  geom_rect(xmin = 0.5, xmax = n_studies + 0.5,
+            ymin = pooled_trad - 1.96*pooled_se_trad,
+            ymax = pooled_trad + 1.96*pooled_se_trad,
+            fill = "red", alpha = 0.05) +
+  scale_color_manual(values = c("Study mean" = "darkblue",
+                                "Pooled effect" = "red")) +
+  labs(title = "Traditional Meta-Analysis",
+       x = "Study", y = "Effect Size",
+       color = "") +
+  coord_cartesian(ylim = y_limits) +
+  my_theme
+
+p_ipd <- ggplot(ipd, aes(Study, Effect)) +
+  geom_jitter(aes(color = "Participant"), width = 0.2, size = 2, alpha = 0.6) +
+  geom_point(data = traditional, aes(Study, Effect, color = "Study mean"), size = 4) +
+  geom_errorbar(data = traditional, aes(Study, ymin = Effect - SE, ymax = Effect + SE, color = "Study mean"), width = 0.2, size = 1) +
+  geom_jitter(aes(Study, Effect, color = "Participant"),
+              width = 0.2, size = 2, alpha = 0.6) +
+  geom_hline(aes(yintercept = pooled_ipd, color = "Pooled effect"),
+             linetype = "dashed", size = 1.5) +
+  geom_rect(xmin = 0.5, xmax = n_studies + 0.5,
+            ymin = pooled_ipd - 1.96*pooled_se_ipd,
+            ymax = pooled_ipd + 1.96*pooled_se_ipd,
+            fill = "red", alpha = 0.005) +
+  scale_color_manual(values = c("Participant" = "forestgreen",
+                                "Study mean" = "darkblue",
+                                "Pooled effect" = "red")) +
+  labs(title = "IPD Meta-Analysis",
+       x = "Study", y = "Effect Size",
+       color = "") +
+  coord_cartesian(ylim = y_limits) +
+  my_theme
+
+
+p_trad
+p_ipd
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+set.seed(2026)
+
+# ----------------------------
+# Simulate participant-level data
+# ----------------------------
+n_studies <- 4
+participants_per_study <- c(10, 15, 12, 18)
+
+ipd <- bind_rows(
+  lapply(1:n_studies, function(i){
+    tibble(
+      Study = paste0("Study ", i),
+      Participant = 1:participants_per_study[i],
+      Effect = rnorm(participants_per_study[i], mean = 0.5 + 0.1*i, sd = 0.1)
+    )
+  })
+)
+
+# ----------------------------
+# Study-level summary (mean ± SE)
+# ----------------------------
+study_summary <- ipd %>%
+  group_by(Study) %>%
+  dplyr::summarize(
+    MeanEffect = mean(Effect),
+    SE = sd(Effect)/sqrt(n()),
+    .groups = "drop"
+  )
+
+# ----------------------------
+# Pooled effect across studies
+# ----------------------------
+pooled_effect <- sum(study_summary$MeanEffect / study_summary$SE^2) /
+                 sum(1 / study_summary$SE^2)
+pooled_se <- 1 / sqrt(sum(1 / study_summary$SE^2))
+# ----------------------------
+# Final IPD figure
+# ----------------------------
+ggplot() +
+  # Participant-level points
+  geom_jitter(data = ipd, aes(x = Study, y = Effect),
+              width = 0.2, height = 0, size = 2, color = "forestgreen", alpha = 0.6) +
+  # Study-level summary (mean ± SE)
+  geom_point(data = study_summary, aes(x = Study, y = MeanEffect),
+             color = "darkblue", size = 4) +
+  geom_errorbar(data = study_summary, aes(x = Study, ymin = MeanEffect - SE, ymax = MeanEffect + SE),
+                width = 0.2, color = "darkblue", size = 1) +
+  # Pooled estimate line
+  geom_hline(yintercept = pooled_effect, color = "red", linetype = "dashed", size = 1.5) +
+  geom_rect(aes(xmin = 0.5, xmax = n_studies + 0.5, ymin = pooled_effect - 1.96*pooled_se, ymax = pooled_effect + 1.96*pooled_se),
+          fill = "red", alpha = 0.1)+
+  labs(
+    title = "IPD Meta-Analysis: Participant-Level and Study-Level Effects",
+    subtitle = "Green dots = participants, Blue dot + error = study summary, Red dashed = pooled effect",
+    x = "Study",
+    y = "Effect Size"
+  ) + my_theme
+```
+
+
+# Helper Functions
+
+## Logistic Curve Generator
+```{r}
+generate_curve <- function(age, midpoint, slope, increasing = TRUE,
+                           noise_sd = 0, min_value = 0.01, max_value = 0.99) {
+
+  sign <- ifelse(increasing, -1, 1)
+
+  y <- min_value + (max_value - min_value) /
+    (1 + exp(sign * slope * (age - midpoint)))
+
+  if (noise_sd > 0) y + rnorm(length(age), 0, noise_sd) else y
+}
+```
+
+## Logistic Model Used in Simulation
+
+```{r}
+logistic <- function(age,
+                     baseline = 10,
+                     amplitude = 5,
+                     slope = 0.15,
+                     midpoint = 60) {
+
+  baseline + amplitude / (1 + exp(slope * (age - midpoint)))
+}
+```
+
+# Example S Shaped Dose Response Patterns
+
+## Simulation Settings
+
+```{r}
+age_seq <- seq(20, 80, length.out = 200)
+n_points <- 40
+
+curve_types <- list(
+  "Increasing (e.g., mortality risk)" =
+    list(slope = 0.09, midpoint = 55, noise_sd = 0.05, increasing = TRUE),
+
+  "Decreasing (e.g., physical function)" =
+    list(slope = 0.15, midpoint = 40, noise_sd = 0.08, increasing = FALSE)
+)
+```
+
+## Generate Curves
+
+```{r}
+df_curves <- do.call(rbind, lapply(names(curve_types), function(type_name) {
+
+  p <- curve_types[[type_name]]
+
+  data.frame(
+    Age = age_seq,
+    Response = generate_curve(age_seq, p$midpoint, p$slope, p$increasing),
+    Type = type_name
+  )
+}))
+```
+
+## Generate Noisy Points
+
+```{r}
+df_points <- do.call(rbind, lapply(names(curve_types), function(type_name) {
+
+  p <- curve_types[[type_name]]
+  age_values <- runif(n_points, 25, 75)
+  data.frame(
+    Age = age_values,
+    Response = generate_curve(
+      age_values,
+      p$midpoint,
+      p$slope,
+      p$increasing,
+      p$noise_sd
+    ),
+    Type = type_name
+  )
+}))
+```
+
+## Plot
+
+```{r}
+ggplot() +
+  geom_point(data=df_points,
+             aes(Age, Response, color = Type),
+             alpha = 0.4,
+             size = 1.5,
+             position = position_jitter(width = 0.5)) +
+
+  geom_line(data=df_curves,
+            aes(Age, Response, color = Type),
+            size = 1.2) +
+
+  labs(
+    title = "S Shaped Dose Response Patterns",
+    x = "Age",
+    y = "Response"
+  ) +
+
+  my_theme +
+  scale_color_manual(values = c("darkred", "navy")) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+# Multi Study Simulation Patterns
+
+## Age Generation with Coverage Gaps
+
+```{r}
+generate_age_points <- function(n, min_age, max_age, gaps = NULL) {
+
+  if (is.null(gaps)) {
+    return(sort(runif(n, min_age, max_age)))
+  }
+
+  segments <- cbind(
+    c(min_age, gaps + 5),
+    c(gaps, max_age)
+  )
+
+  lens <- segments[,2] - segments[,1]
+
+  n_seg <- round(n * lens / sum(lens))
+
+  ages <- unlist(
+    mapply(runif, n_seg, segments[,1], segments[,2], SIMPLIFY = FALSE)
+  )
+
+  sort(ages)[1:n]
+}
+```
+
+## Study Specifications
+
+```{r}
+n_points <- 30
+
+curve_types <- list(
+
+  "Study 1" = list(
+    slope = 0.25,
+    midpoint = 42,
+    noise_sd = 0.06,
+    increasing = FALSE,
+    min_age = 25,
+    max_age = 75,
+    gaps = NULL,
+    color = "darkred",
+    line_type = "solid"
+  ),
+
+  "Study 2" = list(
+    slope = 0.12,
+    midpoint = 55,
+    noise_sd = 0.04,
+    increasing = FALSE,
+    min_age = 45,
+    max_age = 70,
+    gaps = NULL,
+    color = "#ff7f0e",
+    line_type = "dashed"
+  ),
+
+  "Study 3" = list(
+    slope = 0.18,
+    midpoint = 50,
+    noise_sd = 0.07,
+    increasing = FALSE,
+    min_age = 30,
+    max_age = 70,
+    gaps = c(45,55),
+    color = "#2ca02c",
+    line_type = "dotted"
+  )
+)
+```
+
+## Generate Study Curves
+
+```{r}
+df_curves <- do.call(rbind, lapply(names(curve_types), function(type_name) {
+
+  p <- curve_types[[type_name]]
+
+  data.frame(
+    Age = age_seq,
+    Response = generate_curve(age_seq, p$midpoint, p$slope, p$increasing),
+    Type = type_name,
+    LineType = p$line_type
+  )
+}))
+```
+
+## Generate Study Points
+
+```{r}
+df_points <- do.call(rbind, lapply(names(curve_types), function(type_name) {
+
+  p <- curve_types[[type_name]]
+
+  age_points <- generate_age_points(
+    n_points,
+    p$min_age,
+    p$max_age,
+    p$gaps
+  )
+
+  data.frame(
+    Age = age_points,
+    Response = generate_curve(
+      age_points,
+      p$midpoint,
+      p$slope,
+      p$increasing,
+      p$noise_sd
+    ),
+    Type = type_name
+  )
+}))
+```
+
+## Plot Multi Study Curves
+
+```{r}
+colors <- sapply(curve_types, `[[`, "color")
+linetypes <- sapply(curve_types, `[[`, "line_type")
+
+ggplot() +
+
+  geom_point(data=df_points,
+             aes(Age, Response, color = Type),
+             alpha = 0.5,
+             size = 1.8,
+             position = position_jitter(width = 0.8)) +
+
+  geom_line(data=df_curves,
+            aes(Age, Response, color = Type, linetype = Type),
+            size = 1) +
+
+  labs(
+    title = "S Shaped Patterns Across Different Studies",
+    x = "Age",
+    y = "Response"
+  ) +
+
+  my_theme +
+  scale_color_manual(values = colors) +
+  scale_linetype_manual(values = linetypes) +
+  theme(legend.position = "bottom", legend.title = element_blank())
+```
+
+# Logistic Parameter Sensitivity Animations
+
+These animations illustrate how individual parameters affect the logistic curve.
+
+## Age Grid
+
+```{r}
+age <- seq(20, 80, length.out = 200)
+```
+
+## Slope Animation
+
+```{r}
+df_slope <- expand_grid(
+  Age = age,
+  slope = seq(0.05, 0.30, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, slope = slope))
+
+p_slope <- ggplot(df_slope, aes(Age, Y)) +
+  geom_line(size = 1.2, color = "navy") +
+  labs(
+    title = "Slope: Y = 10 + 5 / (1 + exp({round(frame_time,2)}(Age - 60)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_slope + transition_time(slope),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_slope/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_slope + transition_time(slope))
+# anim_save("logit_slope.gif  ")
+```
+
+## Midpoint Animation
+
+```{r}
+df_mid <- expand_grid(
+  Age = age,
+  midpoint = seq(40, 70, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, midpoint = midpoint))
+
+p_mid <- ggplot(df_mid, aes(Age, Y)) +
+  geom_vline(aes(xintercept = midpoint), 
+             linetype = "dashed", 
+             color = "red", 
+             alpha = 0.7) +
+  geom_line(size = 1.2, color = "navy") +
+  labs(
+    title = "Mid Point: Y = 10 + 5 / (1 + exp(0.1({round(frame_time,2)} - 60)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_mid + transition_time(midpoint),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_midpoint/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_mid + transition_time(midpoint))
+# anim_save("logit_mid.gif")
+```
+
+## Amplitude Animation
+
+```{r}
+df_amp <- expand_grid(
+  Age = age,
+  amplitude = seq(2, 8, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, amplitude = amplitude))
+
+p_amp <- ggplot(df_amp, aes(Age, Y)) +
+  geom_ribbon(aes(ymin = 10, ymax = Y), alpha = 0.1, fill = "red") +
+  geom_line(size = 1.2, color = "navy") +
+  labs(
+    title = "Amplitude: Y = 10 + {round(frame_time,1)} / (1 + exp(0.1(Age - 50)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_amp + transition_time(amplitude),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 320,
+  renderer = file_renderer("logit_amplitude/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_amp + transition_time(amplitude))
+# anim_save("logit_amplitude.gif")
+```
+
+## Baseline Animation
+
+```{r}
+df_base <- expand_grid(
+  Age = age,
+  baseline = seq(5, 15, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, baseline = baseline))
+
+p_base <- ggplot(df_base, aes(Age, Y)) +
+  geom_hline(aes(yintercept = baseline), linetype = "dashed", alpha = 0.3, col="red") +
+  geom_line(size = 1.2, color = "navy") +
+  labs(
+    title = "Baseline: Y = {round(frame_time,1)} + 5 / (1 + exp(0.1(Age - 50)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+
+animate(
+  p_base + transition_time(baseline),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_baseline/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_base + transition_time(baseline))
+# anim_save("logit_baseline.gif")
+```
