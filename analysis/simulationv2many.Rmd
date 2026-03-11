@@ -105,12 +105,14 @@ df_plot_many <- df_all_many %>%
 ```
 ### line plot
 ```{r}
-plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, ncol=2, legend_ncol=2))
+plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, ncol=2, 
+                                                    legend_ncol=2, legend_size=15))
 plots_many
 ```
 
 ### CI True Value
 ```{r}
-plot_CI_many <- base_plot_CI(df_plot_many, ncol = 2, legend_ncol=2)
+plot_CI_many <- base_plot_CI(df_plot_many, ncol = 2, 
+                             legend_ncol=2, legend_size=15)
 plot_CI_many
 ```

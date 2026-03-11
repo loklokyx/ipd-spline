@@ -104,11 +104,13 @@ df_plot_some <- df_all_some %>%
 ```
 ### line plot
 ```{r}
-plots_some <- lapply(metrics, function(m) base_plot(df_plot_some, m, ncol=2, legend_ncol=2))
+plots_some <- lapply(metrics, function(m) base_plot(df_plot_some, m, ncol=2,
+                                                    legend_ncol=2, legend_size=15))
 plots_some
 ```
 ### CI True Value
 ```{r}
-plot_CI_some <- base_plot_CI(df_plot_some, ncol = 2, legend_ncol=2)
+plot_CI_some <- base_plot_CI(df_plot_some, ncol = 2,
+                             legend_ncol=2, legend_size=15)
 plot_CI_some
 ```

@@ -102,7 +102,7 @@ is_same_knots <- function(row) {
   length(unique(study_lengths)) == 1   # TRUE if all equal, FALSE if not
 }
 # Base plot template
-base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1) {
+base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1, legend_size=14) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
   df_sub <- df %>% filter(metric_name == !!metric_name)
   
@@ -118,11 +118,12 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1) {
     guides(color = guide_legend(ncol = legend_ncol)) +
     theme(
       legend.position = "bottom",
-      strip.background = element_rect(fill = "white")
+      strip.background = element_rect(fill = "white"),
+      legend.text   = element_text(size = legend_size)
     )
 }
 
-base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1, 
+base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1, legend_size=14,
                          jitter_width = 0, jitter_height = 0, show_jitter = FALSE) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
 
@@ -144,11 +145,12 @@ base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1,
       fill = "Method",
       title = "Predicted Values with Confidence Intervals by Rank"
     ) +
-    guides(color = guide_legend(ncol = legend_ncol)) +
+    guides(color = guide_legend(ncol = legend_ncol), fill = guide_legend(ncol = legend_ncol)) +
     theme(
       legend.position = "bottom",
       strip.background = element_rect(fill = "white"),
-      panel.spacing = unit(1.5, "lines")
+      panel.spacing = unit(1.5, "lines"),
+      legend.text   = element_text(size = legend_size)
     )
   
   if (!show_jitter) {
@@ -194,27 +196,47 @@ make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
   rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
   
   rank_all <- lapply(rank_cols, function(col) {
-    best <- simul_settings %>%
-      arrange(.data[[col]]) %>%
-      slice_head(n = top_n) %>%
-      mutate(rank_method = sub("^Rank_", "", col),
-             rank_id = paste0("top", seq_len(top_n)))
     
-    worst <- simul_settings %>%
-      arrange(.data[[col]]) %>%
-      slice_tail(n = worst_n) %>%
-      mutate(rank_method = sub("^Rank_", "", col),
-             rank_id = paste0("worst", worst_n:1))  # ensures worst1 = absolute worst
+    # ----- TOP -----
+    if (top_n > 0) {
+      best <- simul_settings %>%
+        arrange(.data[[col]]) %>%
+        slice_head(n = top_n) %>%
+        mutate(
+          rank_method = sub("^Rank_", "", col),
+          rank_id = paste0("top", seq_len(top_n))
+        )
+    } else {
+      best <- NULL
+    }
+    
+    # ----- WORST -----
+    if (worst_n > 0) {
+      worst <- simul_settings %>%
+        arrange(.data[[col]]) %>%
+        slice_tail(n = worst_n) %>%
+        mutate(
+          rank_method = sub("^Rank_", "", col),
+          rank_id = paste0("worst", worst_n:1)
+        )
+    } else {
+      worst <- NULL
+    }
     
     bind_rows(best, worst)
   }) %>%
     bind_rows()
   
-  # Define factor levels in correct order
-  lvls <- c(paste0("top", 1:top_n), paste0("worst", worst_n:1))
+  # ----- Factor levels -----
+  lvls <- c(
+    if (top_n > 0) paste0("top", seq_len(top_n)),
+    if (worst_n > 0) paste0("worst", worst_n:1)
+  )
   
-  rank_all <- rank_all %>%
-    mutate(rank_id = factor(rank_id, levels = lvls))
+  if (length(lvls) > 0 && nrow(rank_all) > 0) {
+    rank_all <- rank_all %>%
+      mutate(rank_id = factor(rank_id, levels = lvls))
+  }
   
   return(rank_all)
 }
@@ -242,6 +264,8 @@ make_unique_by_precision <- function(x, digits = 5) {
   return(x_final)
 }
 
+
+myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
 
 OVERLAP_INPUTS <- list(
   

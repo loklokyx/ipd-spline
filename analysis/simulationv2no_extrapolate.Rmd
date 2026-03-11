@@ -27,9 +27,6 @@ study_cols <- grep("^Study", names(simul_settings), value = TRUE)
 ggplot(simul_settings, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
 ```
 
-
-
-
 ```{r}
 exclude_cols <- c("Stage2", 
                   grep("^MSE", names(simul_settings), value = TRUE), 

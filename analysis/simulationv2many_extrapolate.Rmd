@@ -32,8 +32,6 @@ curve(dnorm(x,30,1), from =30-b, to = 30+b)
 curve(dbeta((x-30)/b+0.5,20,20)/b, from =30-b, to =30+b,add=T,col='red')
 ```
 
-
-
 ```{r}
 ggplot(simul_settings, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
 ```
@@ -125,6 +123,7 @@ df_plot_many <- df_all_many %>%
 plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, 
                                                     ncol=2, legend_ncol=4))
 ```
+
 ```{r, fig.width=14}
 plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, 
                                                     ncol=1, legend_ncol=2))
