@@ -1,0 +1,406 @@
+---
+title: "PPT Images"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(rms)
+library(lme4)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+library(tidyverse)
+library(gganimate)
+source("../scripts/helpers.R")
+theme_set(my_theme)
+```
+
+# Linear vs Spline Examples
+```{r}
+set.seed(2026)
+
+Age <- 20:80
+true_fun <- function(x) 10 + 5/(1 + exp(0.15*(x-60)))
+Y_true <- true_fun(Age)
+
+df_linear <- data.frame(Age, Effect = Y_true + rnorm(length(Age), 0, 1))
+df_spline <- df_linear
+
+df_pool <- bind_rows(
+  data.frame(df_linear, Study="3"),
+  data.frame(Age, Effect=Y_true + rnorm(length(Age),0,1), Study="1"),
+  data.frame(Age, Effect=Y_true + rnorm(length(Age),0,1), Study="2"),
+)
+```
+
+## Linear, RCS Fitting
+```{r}
+linear_fit <- lm(Effect ~ Age, data = df_linear)
+
+quan <- make_quantiles(Age, 3)
+
+dd <- datadist(df_spline)
+options(datadist="dd")
+spline_fit <- ols(Effect ~ rcs(Age, quan), data = df_spline)
+
+df_smooth <- df_pool %>%
+  group_by(Study) %>%
+  reframe(
+    Age = Age,
+    Effect_fit = {
+      dd <- datadist(cur_data())
+      options(datadist="dd")
+      
+      fit <- ols(Effect ~ rcs(Age, quan), data = cur_data())
+      predict(fit, newdata = data.frame(Age = Age))
+    }
+  )
+
+age_ranges1 <- list("1" = 20:77, "2" = 22:75, "3" = 25:80)
+df_smooth1 <- df_smooth %>%
+  rowwise() %>%
+  filter(Age %in% age_ranges1[[Study]])
+df_pool1 <- df_pool %>%
+  rowwise() %>%
+  filter(Age %in% age_ranges1[[Study]])
+
+age_ranges2 <- list("1" = 20:50, "2" = 30:60, "3" = 50:80)
+df_smooth2 <- df_smooth %>%
+  rowwise() %>%
+  filter(Age %in% age_ranges2[[Study]])
+df_pool2 <- df_pool %>%
+  rowwise() %>%
+  filter(Age %in% age_ranges2[[Study]])
+```
+
+## Visualising Linear vs Spline Fits
+```{r, warning=FALSE}
+# Linear model
+ggplot(df_linear, aes(x=Age, y=Effect)) +
+  geom_point(alpha=0.3) +
+  geom_line(aes(y=predict(linear_fit)), color="blue", linewidth = 1) +
+  ggtitle("Linear Fit") + xlab("X1") + ylim(9, 18)
+
+# Cubic spline fit (single study)
+ggplot(df_spline, aes(x=Age, y=Effect)) +
+  geom_point(alpha=0.3) +
+  geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
+  geom_line(aes(y=predict(spline_fit)), color="deepskyblue2", linewidth = 1) +
+  ggtitle("Restricted Cubic Spline(RCS) Fit for 1 Study(knots = 3)") + xlab("X1") + ylim(9, 18)
+
+# Cubic spline fit pooling overlapping studies
+ggplot() +
+  geom_point(data=df_pool1, aes(x=Age, y=Effect, color=Study), alpha=0.3) +
+  geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
+  geom_line(data=df_smooth1, aes(x=Age, y=Effect_fit, color=Study), linewidth = 1) +
+  ggtitle("RCS Fit for 3 Studies with consistent knots = 3") +
+  theme(legend.position="right") + xlab("X1") + ylim(9, 18)
+
+# Cubic spline fit pooling limited overlapping studies
+ggplot() +
+  geom_point(data=df_pool2, aes(x=Age, y=Effect, color=Study), alpha=0.3) +
+  geom_line(data=df_smooth2, aes(x=Age, y=Effect_fit, color=Study), linewidth = 1) +
+  ggtitle("RCS Fit (Limited Overlapping Studies), knots = ???") +
+  theme(legend.position="right") + xlab("X1") + ylim(9, 18)
+```
+# Traditional vs IPDMA
+```{r}
+set.seed(2026)
+
+n_studies <- 3
+participants <- c(10, 15, 12, 18)
+
+trad <- tibble(
+  Study = paste0(1:n_studies),
+  Effect = c(0.5, 0.7, 0.6),
+  SE = c(0.1, 0.12, 0.09)
+)
+
+ipd <- bind_rows(lapply(1:n_studies, function(i) {
+  tibble(Study = paste0(i),
+         Effect = rnorm(participants[i], trad$Effect[i], trad$SE[i]))
+}))
+
+pooled_trad <- sum(trad$Effect / trad$SE^2) / sum(1 / trad$SE^2)
+pooled_se_trad <- 1 / sqrt(sum(1 / trad$SE^2))
+
+pooled_ipd <- mean(ipd$Effect)
+pooled_se_ipd <- sd(ipd$Effect) / sqrt(nrow(ipd))
+
+y_limits <- round(c(min(trad$Effect), max(trad$Effect)), 1) + c(-0.1,0.1)
+
+p_trad <-  ggplot(trad, aes(Study, Effect)) +
+  geom_point(aes(color = "Study mean"), size = 4) +
+  geom_errorbar(aes(ymin = Effect - SE, ymax = Effect + SE, color = "Study mean"), width = 0.2, linewidth = 1) +
+  geom_hline(aes(yintercept = pooled_trad, color = "Pooled effect"),
+             linetype = "dashed", linewidth = 1.5) +
+  geom_rect(xmin = 0.5, xmax = n_studies + 0.5,
+            ymin = pooled_trad - 1.96*pooled_se_trad,
+            ymax = pooled_trad + 1.96*pooled_se_trad,
+            fill = "red", alpha = 0.05) +
+  scale_color_manual(
+    values = c("Study mean" = "darkblue", "Pooled effect" = "red")) +
+  labs(title = "Traditional Meta Analysis", color = "") +
+  coord_cartesian(ylim = y_limits) + theme(legend.position="bottom") 
+
+p_ipd <- ggplot(ipd, aes(Study, Effect)) +
+  geom_jitter(aes(color = Study), width = 0.2, size = 2, alpha = 0.6) +
+  geom_point(data = trad, aes(Study, Effect), size = 4, color = "darkblue") +
+  geom_errorbar(data = trad, aes(Study, ymin = Effect - SE, ymax = Effect + SE), width = 0.2, linewidth = 1, color = "darkblue") +
+  geom_jitter(aes(Study, Effect, color = Study),
+              width = 0.2, size = 2, alpha = 0.6) +
+  geom_hline(aes(yintercept = pooled_ipd), color = "red",
+             linetype = "dashed", linewidth = 1.5) +
+  geom_rect(xmin = 0.5, xmax = n_studies + 0.5,
+            ymin = pooled_ipd - 1.96*pooled_se_ipd,
+            ymax = pooled_ipd + 1.96*pooled_se_ipd,
+            fill = "red", alpha = 0.005) +
+  labs(title = "IPD Meta Analysis", color = "Study") +
+  coord_cartesian(ylim = y_limits) + theme(legend.position="bottom") 
+
+
+p_trad
+p_ipd
+```
+# Moving Knot Animation
+```{r}
+set.seed(2026)
+Age <- 0:100
+Y_true <- true_fun(Age)
+Y_true <- Y_true + rnorm(length(Age), 0, 1)
+```
+
+```{r}
+q <- c(0.2, 0.4, 0.6, 0.8)
+knots_all <- quantile(Age, q)
+
+k1 <- knots_all[1]   # 0.05 fixed
+k2 <- knots_all[2]   # moving
+k3 <- knots_all[3]   # moving
+k4 <- knots_all[4]   # 0.95 fixed
+
+boundary_knots <- data.frame(Age = c(k1, k4), type = "Boundary Knots")
+
+frames <- 30
+
+# move interior knots left then right
+move_seq <- c(seq(-12,12,length.out=frames/2),
+              seq(12,-12,length.out=frames/2))
+
+plot_data <- bind_rows(
+  lapply(1:frames, function(frame){
+    knots <- c(k2 + move_seq[frame], k3 + move_seq[frame])
+    fit <- lm(Y_true ~ ns(Age, knots = knots,
+   Boundary.knots = c(k1, k4)))
+    data.frame(Age, Y_fit = predict(fit), frame)
+  })
+)
+
+knots_points <- bind_rows(
+  lapply(1:frames, function(frame){
+
+    knots <- c(k2 + move_seq[frame],
+               k3 + move_seq[frame])
+
+    fit <- lm(Y_true ~ ns(Age, knots = knots,
+   Boundary.knots = c(k1, k4)))
+
+    data.frame(Age = knots,
+      Y_fit = predict(fit, newdata=data.frame(Age=knots)),
+      frame
+    )
+  })
+)
+
+temp_data <- data.frame(Age, Y_true)
+
+p_base <- ggplot(plot_data, aes(Age, Y_fit)) +
+  geom_line(color="deepskyblue", linewidth=1.6) +
+  geom_point(data = temp_data, aes(Age, Y_true), color = "black", shape = 1) +
+  geom_point(data=knots_points,
+             aes(Age, Y_fit, color="Interior Knots", shape="Interior Knots"),
+             size=3) +
+  geom_vline(data=boundary_knots,
+             aes(xintercept=Age, linetype="Boundary Knots", color="Boundary Knots"), 
+             linewidth=1) +
+  
+  scale_color_manual(values=c("Interior Knots"="red")) +
+  scale_shape_manual(values=c("Interior Knots"=8)) +
+  scale_linetype_manual(values=c("Boundary Knots"="dotted")) +
+
+  labs(title="RCS Predicted Curve (Knots = 4)",
+       subtitle = "2 Boundary + 2 Moving Interior Knots",
+       color="", shape="", linetype="") + theme(legend.position="bottom") +
+  transition_time(frame)
+
+animate(p_base, fps = 20, #   width = 400, height = 470,
+  renderer = file_renderer("knots4/", prefix = "", overwrite = TRUE)
+)
+```
+
+# Study Specific Knot
+```{r, warning=FALSE}
+quan1 <- make_quantiles(age_ranges2[["1"]], 3)
+quan2 <- make_quantiles(age_ranges2[["2"]], 3)
+quan3 <- make_quantiles(age_ranges2[["3"]], 3)
+
+# Cubic spline fit pooling limited overlapping studies
+ggplot() +
+  geom_point(data=df_pool2, aes(x=Age, y=Effect, color=Study), alpha=0.3) +
+  geom_line(data=df_smooth2, aes(x=Age, y=Effect_fit, color=Study), linewidth = 1) +
+  ggtitle("RCS Fit (Limited Overlapping Studies)") +
+  geom_vline(xintercept = quan1, linetype = 2, color = "red4") +
+  geom_vline(xintercept = quan2, linetype = 5, color = "green4") +
+  geom_vline(xintercept = quan3, linetype = 6, color = "blue") +
+  theme(legend.position="bottom") + ylim(9, 18)
+```
+
+# Logistic Parameter Sensitivity Animations
+```{r}
+logistic <- function(age,
+                     baseline = 10,
+                     amplitude = 5,
+                     slope = 0.15,
+                     midpoint = 60) {
+
+  baseline + amplitude / (1 + exp(slope * (age - midpoint)))
+}
+
+age <- seq(20, 80, length.out = 200)
+```
+
+## Slope Animation
+
+```{r}
+df_slope <- expand_grid(
+  Age = age,
+  slope = seq(0.05, 0.30, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, slope = slope))
+
+p_slope <- ggplot(df_slope, aes(Age, Y)) +
+  geom_line(linewidth = 1.2, color = "navy") +
+  labs(
+    title = "Slope: Y = 10 + 5 / (1 + exp({round(frame_time,2)}(Age - 60)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_slope + transition_time(slope),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_slope/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_slope + transition_time(slope))
+# anim_save("logit_slope.gif  ")
+```
+
+## Midpoint Animation
+
+```{r}
+df_mid <- expand_grid(
+  Age = age,
+  midpoint = seq(40, 70, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, midpoint = midpoint))
+
+p_mid <- ggplot(df_mid, aes(Age, Y)) +
+  geom_vline(aes(xintercept = midpoint), 
+             linetype = "dashed", 
+             color = "red", 
+             alpha = 0.7) +
+  geom_line(linewidth = 1.2, color = "navy") +
+  labs(
+    title = "Mid Point: Y = 10 + 5 / (1 + exp(0.1(Age - {round(frame_time,2)})))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_mid + transition_time(midpoint),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_midpoint/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_mid + transition_time(midpoint))
+# anim_save("logit_mid.gif")
+```
+
+## Amplitude Animation
+
+```{r}
+df_amp <- expand_grid(
+  Age = age,
+  amplitude = seq(2, 8, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, amplitude = amplitude))
+
+p_amp <- ggplot(df_amp, aes(Age, Y)) +
+  geom_ribbon(aes(ymin = 10, ymax = Y), alpha = 0.1, fill = "red") +
+  geom_line(linewidth = 1.2, color = "navy") +
+  labs(
+    title = "Amplitude: Y = 10 + {round(frame_time,1)} / (1 + exp(0.1(Age - 50)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+animate(
+  p_amp + transition_time(amplitude),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 320,
+  renderer = file_renderer("logit_amplitude/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_amp + transition_time(amplitude))
+# anim_save("logit_amplitude.gif")
+```
+
+## Baseline Animation
+
+```{r}
+df_base <- expand_grid(
+  Age = age,
+  baseline = seq(5, 15, length.out = 40)
+) %>%
+  mutate(Y = logistic(Age, baseline = baseline))
+
+p_base <- ggplot(df_base, aes(Age, Y)) +
+  geom_hline(aes(yintercept = baseline), linetype = "dashed", alpha = 0.3, col="red") +
+  geom_line(linewidth = 1.2, color = "navy") +
+  labs(
+    title = "Baseline: Y = {round(frame_time,1)} + 5 / (1 + exp(0.1(Age - 50)))",
+    x = "Age",
+    y = "Response"
+  ) +
+  my_theme
+
+
+animate(
+  p_base + transition_time(baseline),
+  nframes = 40,
+  fps = 20,
+  width = 450,
+  height = 300,
+  renderer = file_renderer("logit_baseline/", prefix = "", overwrite = TRUE)
+)
+
+# animate(p_base + transition_time(baseline))
+# anim_save("logit_baseline.gif")
+```

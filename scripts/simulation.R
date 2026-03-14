@@ -7,16 +7,16 @@ source("scripts/helpers.R")
 
 # Data generation
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
-# # some overlap
-# input <- tribble(
-#   ~study, ~n, ~noise, ~Y, ~X1,
-#   "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
-#   "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
-#   "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
-#   "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
-#   "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
-#   "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
-# )
+# some overlap
+input <- tribble(
+  ~study, ~n, ~noise, ~Y, ~X1,
+  "1", 300, 0, myfunc, "rnorm(n, 35, 1)",
+  "2", 300, 0, myfunc, "rnorm(n, 40, 2)",
+  "3", 300, 0, myfunc, "rnorm(n, 50, 3)",
+  "4", 300, 0, myfunc, "rnorm(n, 60, 4)",
+  "5", 300, 0, myfunc, "rnorm(n, 70, 5)",
+  "6", 300, 0, myfunc, "rnorm(n, 80, 5)"
+)
 
 # no overlap 40 and 60
 input <- tribble(

@@ -34,8 +34,9 @@ ipd_data_ori <- read_csv("../data/generated_ipd.csv") %>%
 nrow(ipd_data_ori)
 ```
 ```{r}
-noise_sd <- 1
-set.seed(10)
+noise_sd <- 2
+# set.seed(23861827)
+set.seed(70) # 2025 weird behavior on No Overlap
 ipd_data <- ipd_data_ori %>%
   mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd))
 dd <- datadist(ipd_data)
@@ -49,8 +50,9 @@ tapply(ipd_data$Age, ipd_data$Study, FUN = function(x) {
 })
 
 ggplot(ipd_data) +
-  geom_point(aes(x = Age, y = Y, color = Study), shape = 1) +
-  labs(title = "Included noise of Y~N(0,1)", x = "Age", y = "Y")
+  geom_point(aes(x = Age, y = Y, color = Study), alpha = 0.3) +
+  geom_line(data=plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
+  labs(title = "Included noise of Y~N(0,2)", x = "Age", y = "Y")
 ```
 # Stage 1
 ## Fit study-specific spline models
@@ -59,7 +61,7 @@ studies <- unique(ipd_data$Study)
 study_models <- setNames(lapply(studies, function(s) {
   study_data <- subset(ipd_data, Study == s)
   
-  quan <- make_quantiles(study_data$Age, knot = 3)
+  quan <- make_quantiles(study_data$Age, knot = 4)
   pred_str <- make_rcs_formula("Age", quan)
   formula_obj <- as.formula(paste0("Y ~ ", pred_str))
   model <- ols(formula_obj, data = study_data)
@@ -123,7 +125,8 @@ residuals_df <- do.call(rbind, residuals_list)
 ggplot(residuals_df, aes(x = fitted, y = residuals)) +
   geom_point(alpha = 0.6) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  facet_wrap(~Study, scales = "fixed") +
+  facet_wrap(~Study, scales = "free") +
+  # facet_wrap(~Study, scales = "fixed") +
   labs(title = "Stage 1 Residuals vs Fitted", x = "Fitted", y = "Residuals")
 ```
 ## Extract and summarize results (ignore)
@@ -178,11 +181,10 @@ ggplot() +
             color = "blue", linewidth = 1) +
   geom_line(data = meta_data, aes(x = Age, y = Y_pred), 
             color = "red", linewidth = 1.0) +
-  geom_vline(xintercept = make_quantiles(combined_data$Age, knot = 5), linetype = "dashed", color = "grey40") +
-
+  geom_vline(xintercept = make_quantiles(combined_data$Age, knot = 5),
+             linetype = "dashed", color = "grey40") +
   labs(
-    title = "Stage 2: Combined Pooled vs Meta-Analysed Splines",
-    x = "Age",
+    title = "Stage 2: Pooled(Blue) vs Meta-Analysed(Red)",
     y = "Predicted Y"
   )
 ```
@@ -197,16 +199,14 @@ meta_model <- lmer(meta_formula, data = meta_data_re)
 
 meta_data_re$Y_pred <- predict(meta_model, newdata = meta_data_re)
 
-
 ggplot(meta_data_re) +
   geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.1) +
-  geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1, alpha=0.5) +
-  geom_line(aes(x = Age, y = Y_pred, color = Study), linewidth = 1.0) +
+  geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
+  geom_line(aes(x = Age, y = Y_pred, color = Study), linewidth = 1) +
   geom_vline(xintercept = make_quantiles(combined_data$Age, knot = 5), linetype = "dashed") +
-
   labs(
-    title = "Stage 2: Meta-Analysed Splines Including Study RE",
-    x = "Age",
+    title = "Stage 2: Meta-Analysed Including Study RE",
     y = "Predicted Y"
   )
 ```
+

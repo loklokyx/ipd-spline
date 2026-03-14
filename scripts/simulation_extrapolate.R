@@ -271,7 +271,7 @@ run_full_simulation <- function() {
     
     # Save to CSV inside the correct simulated_dir
     write_csv(settings_df, paste0(CONFIG$simulated_dir, "simul_settings.csv"))
-    cat("Settings saved!\n")
+    cat("Settings saved in ", CONFIG$simulated_dir, " !\n")
   }
   
   return(settings_df)
