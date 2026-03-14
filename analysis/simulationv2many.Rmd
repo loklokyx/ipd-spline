@@ -36,7 +36,7 @@ rank_all <- make_rank_all(simul_settings, top_n, worst_n)
 rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
 # Factor with desired order
 methods <- unique(rank_all$rank_method)
-lvls <- c(paste0("top", 1:top_n), paste0("worst", worst_n:1))
+lvls <- c(paste0("best", 1:top_n), paste0("worst", worst_n:1))
 rank_all %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
@@ -60,11 +60,21 @@ for (i in 1:nrow(rank_all)) {
 names(sim_data_many) <- rank_all$Name
 ```
 ```{r}
-ggplot(sim_data_many[[1]]) +
-  geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape=1) +
-  labs(title = "Simulated True Data (Many Overlap)", x = "Age", y = "Y",
+ori_data_many <- sim_data_many[[1]] %>%
+  filter(method == "pooled") %>%
+  select(Study, Y, Age) %>%
+  mutate(Study = as.factor(Study))
+
+ggplot(ori_data_many) +
+  geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape = 1) +
+  labs(title = "Simulated True Data (Much Overlap)", x = "Age", y = "Y",
        color = "Study") +
-  facet_wrap(~Study, scales = "fixed")
+  facet_wrap(~Study, scales = "fixed") +
+  theme(legend.position = "bottom",
+        legend.text   = element_text(size = 14)) +
+  guides(
+    color = guide_legend(ncol = 6, override.aes = list(shape = 16))
+  )
 ```
 
 # Calculate Metrics Reduce df
@@ -102,17 +112,30 @@ df_plot_many <- df_all_many %>%
     names_to = "metric_name",
     values_to = "metric_value"
   )
-```
-### line plot
-```{r}
-plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, ncol=2, 
-                                                    legend_ncol=2, legend_size=15))
-plots_many
+
+ff_line_id <- unique(df_plot_many$line_id)
+ff_line_id <- ff_line_id[c(3, 1, 4, 2)]
+df_plot_many <- df_plot_many %>% mutate(line_id = factor(line_id, levels = ff_line_id))
 ```
 
+### line plot
+```{r}
+df_plot_many2 <- df_plot_many %>% filter(rank_id == "best1")
+
+plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, ncol=2, 
+                                                    legend_ncol=2, legend_size=15))
+plots_many[[1]]
+```
+```{r, fig.width=18, fig.height=5}
+ppp_many <- 
+  base_plot(df_plot_many, metrics[1], ncol=2, legend_ncol=2, legend_size=15)+
+  base_plot(df_plot_many, metrics[2], ncol=2, legend_ncol=2, legend_size=15)+
+  base_plot(df_plot_many, metrics[3], ncol=2, legend_ncol=2, legend_size=15)
+ppp_many
+```
 ### CI True Value
 ```{r}
-plot_CI_many <- base_plot_CI(df_plot_many, ncol = 2, 
+plot_CI_many <- base_plot_CI(df_plot_many2, ncol = 2, 
                              legend_ncol=2, legend_size=15)
 plot_CI_many
 ```

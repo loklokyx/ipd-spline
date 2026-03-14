@@ -102,11 +102,13 @@ is_same_knots <- function(row) {
   length(unique(study_lengths)) == 1   # TRUE if all equal, FALSE if not
 }
 # Base plot template
-base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1, legend_size=14) {
+base_plot <- function(df, metric_name, ncol, fix_y = TRUE, 
+                      legend = TRUE, legend_ncol=1, legend_size=14) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
   df_sub <- df %>% filter(metric_name == !!metric_name)
   
-  ggplot(df_sub, aes(x = Age, y = metric_value, color = line_id)) +
+  
+  p <- ggplot(df_sub, aes(x = Age, y = metric_value, color = line_id)) +
     geom_line(linewidth = 1) +
     geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
     facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
@@ -115,15 +117,22 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE, legend_ncol=1, legend
       y = metric_name,
       color = "Method"
     ) +
-    guides(color = guide_legend(ncol = legend_ncol)) +
-    theme(
-      legend.position = "bottom",
-      strip.background = element_rect(fill = "white"),
-      legend.text   = element_text(size = legend_size)
-    )
+    theme(strip.background = element_rect(fill = "white"))
+  
+  if (legend) {
+    p <- p + 
+      guides(color = guide_legend(ncol = legend_ncol)) +
+      theme(
+        legend.position = "bottom",
+        legend.text = element_text(size = legend_size)
+      )
+  } else {
+    p <- p + theme(legend.position = "none")
+  }
 }
 
-base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1, legend_size=14,
+base_plot_CI <- function(df, ncol, fix_y = TRUE, title = "Predicted Values CI",
+                         legend = TRUE, legend_ncol=1, legend_size=14,
                          jitter_width = 0, jitter_height = 0, show_jitter = FALSE) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
 
@@ -143,15 +152,24 @@ base_plot_CI <- function(df, ncol, fix_y = TRUE, legend_ncol=1, legend_size=14,
       y = "Predicted Y",
       color = "Method",
       fill = "Method",
-      title = "Predicted Values with Confidence Intervals by Rank"
+      title = title
     ) +
     guides(color = guide_legend(ncol = legend_ncol), fill = guide_legend(ncol = legend_ncol)) +
     theme(
-      legend.position = "bottom",
       strip.background = element_rect(fill = "white"),
-      panel.spacing = unit(1.5, "lines"),
-      legend.text   = element_text(size = legend_size)
+      panel.spacing = unit(1.5, "lines")
     )
+  
+  if (legend) {
+    p <- p + 
+      guides(color = guide_legend(ncol = legend_ncol)) +
+      theme(
+        legend.position = "bottom",
+        legend.text   = element_text(size = legend_size)
+      )
+  } else {
+    p <- p + theme(legend.position = "none")
+  }
   
   if (!show_jitter) {
     p <- p + geom_line(aes(y = Y_true), color = "black", linetype = "longdash")
@@ -204,7 +222,7 @@ make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
         slice_head(n = top_n) %>%
         mutate(
           rank_method = sub("^Rank_", "", col),
-          rank_id = paste0("top", seq_len(top_n))
+          rank_id = paste0("best", seq_len(top_n))
         )
     } else {
       best <- NULL
@@ -229,7 +247,7 @@ make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
   
   # ----- Factor levels -----
   lvls <- c(
-    if (top_n > 0) paste0("top", seq_len(top_n)),
+    if (top_n > 0) paste0("best", seq_len(top_n)),
     if (worst_n > 0) paste0("worst", worst_n:1)
   )
   
