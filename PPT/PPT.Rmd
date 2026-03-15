@@ -16,6 +16,7 @@ library(patchwork)
 library(dplyr)
 library(tidyverse)
 library(gganimate)
+library(ggtext)
 source("../scripts/helpers.R")
 theme_set(my_theme)
 ```
@@ -53,10 +54,10 @@ df_smooth <- df_pool %>%
   reframe(
     Age = Age,
     Effect_fit = {
-      dd <- datadist(cur_data())
+      dd <- datadist(pick(everything()))
       options(datadist="dd")
       
-      fit <- ols(Effect ~ rcs(Age, quan), data = cur_data())
+      fit <- ols(Effect ~ rcs(Age, quan), data = pick(everything()))
       predict(fit, newdata = data.frame(Age = Age))
     }
   )
@@ -272,6 +273,8 @@ logistic <- function(age,
 }
 
 age <- seq(20, 80, length.out = 200)
+
+my_theme2 <- my_theme + theme(plot.title = element_markdown())
 ```
 
 ## Slope Animation
@@ -286,11 +289,11 @@ df_slope <- expand_grid(
 p_slope <- ggplot(df_slope, aes(Age, Y)) +
   geom_line(linewidth = 1.2, color = "navy") +
   labs(
-    title = "Slope: Y = 10 + 5 / (1 + exp({round(frame_time,2)}(Age - 60)))",
+    title = "Slope: Y = 10 + 5 / (1 + exp(<span style='color:red;'>{round(frame_time,2)}</span>(Age - 60)))",
     x = "Age",
     y = "Response"
-  ) +
-  my_theme
+  ) + my_theme2
+
 
 animate(
   p_slope + transition_time(slope),
@@ -321,11 +324,10 @@ p_mid <- ggplot(df_mid, aes(Age, Y)) +
              alpha = 0.7) +
   geom_line(linewidth = 1.2, color = "navy") +
   labs(
-    title = "Mid Point: Y = 10 + 5 / (1 + exp(0.1(Age - {round(frame_time,2)})))",
+    title = "Mid Point: Y = 10 + 5 / (1 + exp(0.1(Age - <span style='color:red;'>{round(frame_time,2)}</span>)))",
     x = "Age",
     y = "Response"
-  ) +
-  my_theme
+  ) + my_theme2
 
 animate(
   p_mid + transition_time(midpoint),
@@ -353,18 +355,18 @@ p_amp <- ggplot(df_amp, aes(Age, Y)) +
   geom_ribbon(aes(ymin = 10, ymax = Y), alpha = 0.1, fill = "red") +
   geom_line(linewidth = 1.2, color = "navy") +
   labs(
-    title = "Amplitude: Y = 10 + {round(frame_time,1)} / (1 + exp(0.1(Age - 50)))",
+    title = "Amplitude: Y = 10 + <span style='color:red;'>{round(frame_time,1)}</span> / (1 + exp(0.1(Age - 50)))",
     x = "Age",
     y = "Response"
   ) +
-  my_theme
+  my_theme2
 
 animate(
   p_amp + transition_time(amplitude),
   nframes = 40,
   fps = 20,
   width = 450,
-  height = 320,
+  height = 300,
   renderer = file_renderer("logit_amplitude/", prefix = "", overwrite = TRUE)
 )
 
@@ -385,11 +387,10 @@ p_base <- ggplot(df_base, aes(Age, Y)) +
   geom_hline(aes(yintercept = baseline), linetype = "dashed", alpha = 0.3, col="red") +
   geom_line(linewidth = 1.2, color = "navy") +
   labs(
-    title = "Baseline: Y = {round(frame_time,1)} + 5 / (1 + exp(0.1(Age - 50)))",
+    title = "Baseline: Y = <span style='color:red;'>{round(frame_time,1)}</span> + 5 / (1 + exp(0.1(Age - 50)))",
     x = "Age",
     y = "Response"
-  ) +
-  my_theme
+  ) + my_theme2
 
 
 animate(
