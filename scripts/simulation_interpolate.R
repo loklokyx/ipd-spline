@@ -20,17 +20,17 @@ CONFIG <- list(
   overlap_conditions = c("simulated_no", "simulated_some", "simulated_many"),
   # n_sim = 10,
   # knots_list = c(4),
-  # overlap_conditions = c("simulated_no", "simulated_some", "simulated_many"),
+  # overlap_conditions = c("simulated_many"),
   stage2_knots_list = c(5),
   noise_sd = 2,
   weight_fun = function(se) 1/se^2,  # inverse variance weighting
-  setting_dir = "./data/extrapolate4/"
+  setting_dir = "./data/interpolate3/"
 )
 
 # Stage 1: Individual study predictions
 run_stage1 <- function(sim_data, study_ids, stage1_knots_vec) {
   stage1_probs <- list()
-  
+
   pred_stage1_list <- vector("list", length(study_ids))
   
   for (s_idx in seq_along(study_ids)) {
@@ -45,7 +45,7 @@ run_stage1 <- function(sim_data, study_ids, stage1_knots_vec) {
     formula_obj <- as.formula(paste0("Y ~ ", pred_str))
     model <- ols(formula_obj, data = study_data)
     
-    X <- model.matrix(delete.response(terms(model)), sim_data)
+    X <- model.matrix(delete.response(terms(model)), study_data)
     beta <- coef(model)
     V <- as.matrix(vcov(model))
     
@@ -59,27 +59,26 @@ run_stage1 <- function(sim_data, study_ids, stage1_knots_vec) {
     pred_stage1_list[[s_idx]] <- data.frame(
       Study = s,
       study = s,
-      Age = sim_data$Age,
-      Y = fit,
-      SE = se_total
+      Age   = study_data$Age,
+      Y     = fit,
+      SE    = se_total
     )
   }
+  
   pred_stage1 <- do.call(rbind, pred_stage1_list)
   list(data = pred_stage1, probs = stage1_probs)
 }
 
 # Single simulation run
 run_single_simulation <- function(sim_i, study_ids, stage1_knots_vec, stage2_knots) {
-  sim_data <- CONFIG$data %>% 
-    mutate(Y = Y + rnorm(n(), 0, CONFIG$noise_sd))
+  sim_data <- CONFIG$data %>% mutate(Y = Y + rnorm(n(), 0, CONFIG$noise_sd))
   
   stage1_results <- run_stage1(sim_data, study_ids, stage1_knots_vec)
-
   # Stage 2: Methods
-  pooled_result <- run_pooled(stage1_results$data, CONFIG$stage2_knots, CONFIG$weight_fun, "response_s", T)
-  meta_result <- run_meta_fixed(stage1_results$data, CONFIG$stage2_knots, CONFIG$weight_fun, "random", T)
+  pooled_result <- run_pooled(stage1_results$data, CONFIG$stage2_knots, CONFIG$weight_fun, "response_s")
+  meta_result <- run_meta_fixed(stage1_results$data, CONFIG$stage2_knots, CONFIG$weight_fun, "random")
   stage2_results <- list(pooled = pooled_result, meta = meta_result)
-  
+
   stage2_probs <- make_quantiles(stage1_results$data$Age, CONFIG$stage2_knots)
   list(
     predictions = stage2_results,
@@ -97,7 +96,6 @@ save_simulation_results <- function(all_results, filename) {
   
   # Compute weighted MSE for each method
   Y_true <- CONFIG$data$Y
-  
   # Save simulated predictions
   row_based_df <- data.frame()
   for (method in method_names) {
@@ -156,8 +154,8 @@ run_full_simulation <- function() {
       # Run all simulations
       all_results <- future_lapply(seq_len(CONFIG$n_sim), function(sim_i) {
         run_single_simulation(sim_i, study_ids, stage1_knots_vec, stage2_knots)
-      })
-
+      }, future.seed = FALSE)
+      
       # Save results
       results_info <- save_simulation_results(all_results, filename)
       
@@ -223,12 +221,12 @@ for (cond in CONFIG$overlap_conditions) {
     mutate(
       Y = abs(Y), 
       Study = as.factor(Study))
-
+  
   write_csv(CONFIG$data, paste0(CONFIG$simulated_dir, "generated_ipd.csv"))
-
+  
   cat("Running:", cond, "\n")
-  # Run your simulation for this dataset
   dd <- datadist(CONFIG$data)
   options(datadist = "dd")
+  # Run your simulation for this dataset
   settings_df <- run_full_simulation()
 }

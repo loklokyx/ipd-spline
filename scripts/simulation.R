@@ -4,6 +4,8 @@ library(rms)
 library(lme4)
 source("data/random_data.r")
 source("scripts/helpers.R")
+library(future.apply)
+plan(multisession, workers = parallel::detectCores() - 1)
 
 # Data generation
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
@@ -219,12 +221,9 @@ for (stage2_knots in CONFIG$stage2_knots_list) {
                        "_second", stage2_knots)
     
     # Run all simulations for this combination
-    all_results <- list()
-    for (sim_i in seq_len(CONFIG$n_sim)) {
-      all_results[[sim_i]] <- run_single_simulation(
-        sim_i, study_ids, stage1_knots_vec, stage2_knots
-      )
-    }
+    all_results <- future_lapply(seq_len(CONFIG$n_sim), function(sim_i) {
+      run_single_simulation(sim_i, study_ids, stage1_knots_vec, stage2_knots)
+    })
 
     # Save results and collect settings
     results_info <- save_simulation_results(all_results, filename)

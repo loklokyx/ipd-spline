@@ -90,7 +90,32 @@ generate_from_table <- function(input_table) {
     all_data[[i]] <- study_data
   }
   
-  bind_rows(all_data)
+  bind_rows(all_data) %>%
+    mutate(across(starts_with("X"), ~make_unique_by_precision(.x, digits = 5)))
+}
+
+
+make_unique_by_precision <- function(x, digits = 5) {
+  # Round first to the desired digits
+  x <- round(x, digits)
+  
+  # Small offset based on precision (e.g. digits=5 → 1e-6)
+  offset <- 10^(-(digits + 1))
+  
+  # Order to preserve original sequence
+  ord <- order(x)
+  x_sorted <- x[ord]
+  
+  # Handle duplicates
+  dup_index <- ave(x_sorted, x_sorted, FUN = seq_along)
+  
+  # Add incremental offset to duplicates
+  x_sorted <- x_sorted + (dup_index - 1) * offset
+  
+  # Revert to original order
+  x_final <- x_sorted[order(ord)]
+  
+  return(x_final)
 }
 
 # example
@@ -114,3 +139,11 @@ generate_from_table <- function(input_table) {
 # 
 # set.seed(2025)
 # generate_from_table(input)
+
+# input <- OVERLAP_INPUTS[["simulated_many"]] # in helpers.R
+# set.seed(23171563)
+# ipd_data <- generate_from_table(input) %>%
+#   rename(Age = X1) %>%
+#   mutate(Y = abs(Y), Study = as.factor(Study))
+# 
+# write_csv(ipd_data, "data/generated_ipd_many.csv")

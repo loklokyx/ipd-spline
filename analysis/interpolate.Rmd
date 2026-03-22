@@ -1,0 +1,257 @@
+---
+title: "Interpolate"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(rms)
+library(lme4)
+library(ggplot2)
+library(patchwork)
+source("../scripts/helpers.R")
+set.seed(80)
+```
+
+# Interpolate
+```{r}
+s1_knot <- 4
+s2_knot <- 5
+```
+# Stage 1
+```{r}
+run_ipd_ma_i <- function(data, noise_sd = 0.1, knots = 3) {
+  ipd_data <- data %>%
+    mutate(study = as.factor(study)) %>%
+    mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd)) %>%
+    group_by(study)
+    
+  # Fit study-specific spline models
+  studies <- unique(ipd_data$study)
+  pred_data <- data.frame()
+  
+  for (s_idx in seq_along(studies)) {
+    s <- studies[s_idx]
+    study_data <- subset(ipd_data, study == s)
+    
+    pred_str <- make_rcs_formula("Age", make_quantiles(study_data$Age, knots))
+    formula_obj <- as.formula(paste0("Y ~ ", pred_str))
+    model <- ols(formula_obj, data = study_data)
+    
+    X <- model.matrix(delete.response(terms(model)), study_data)
+    beta <- coef(model)
+    V <- as.matrix(vcov(model))
+
+    fit <- as.numeric(X %*% beta)
+    # se_fit <- sqrt(diag(X %*% V %*% t(X)))
+    se_fit <- sqrt(rowSums((X %*% V) * X))
+
+    # confidence interval only
+    # se_total <- se_fit
+    se_total <- sqrt(se_fit^2 + model$stats["Sigma"]^2)
+
+    temp <- data.frame(
+      study     = s,
+      Age       = study_data$Age,
+      Y         = fit,
+      Y_pred    = fit,
+      lower     = fit - 1.96 * se_fit,
+      upper     = fit + 1.96 * se_fit,
+      SE        = se_total,
+      fitted    = fitted(model),
+      residuals = residuals(model)
+    )
+    pred_data <- rbind(pred_data, temp)
+  }
+  return(list(
+    data = ipd_data,
+    pred = pred_data
+  ))
+}
+
+plot_stage1 <- function(result, knot = 3){
+  knots_q <- make_quantiles(result$data$Age, knot = knot)
+  ggplot() +
+    geom_point(data = result$data, alpha = 0.7,
+               aes(x = Age, y = Y, color = study), shape=1) +
+    geom_line(data = result$pred,
+              aes(x = Age, y = Y, group = study),
+              linewidth = 1, alpha = 0.8, color = "blue") +
+    geom_ribbon(data = result$pred,
+                aes(x = Age, ymin = lower, ymax = upper, group = study),
+                alpha = 0.5, fill = "lightblue", color = NA) +
+    # geom_vline(xintercept = knots_q, linetype = "dashed", color = "red") +
+    labs(title = "Study-specific spline fits with observed data",
+         x = "Age", y = "Y") +
+    facet_wrap(~ study, scales = "free_y")
+}
+
+plot_res_stage1 <- function(result){
+  ggplot(result$pred, aes(x = fitted, y = residuals)) +
+    geom_point(alpha = 0.6) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    facet_wrap(~study, scales = "free_x") +
+    labs(title = "Stage 1 Residuals vs Fitted", x = "Fitted", y = "Residuals")
+}
+```
+
+## no
+```{r}
+ipd_data_no_i <- read_csv("../data/generated_ipd_no.csv", show_col_types = FALSE)
+ipd_data_no_i <- ipd_data_no_i %>%
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_no_i)
+options(datadist = "dd")
+
+res_no_i <- run_ipd_ma_i(ipd_data_no_i, noise_sd = 2, knots = s1_knot)
+# res_no_i <- run_ipd_ma_i(ipd_data_no_i, noise_sd = 0.1, knots = 3)
+# ggplot(res_no_i$data, aes(x = Age, y = Y, color = study)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "Observed data by Study",
+#        x = "Age", y = "Y")
+plot_stage1(res_no_i)
+plot_res_stage1(res_no_i)
+```
+## some
+```{r}
+ipd_data_some_i <- read_csv("../data/generated_ipd_some.csv", show_col_types = FALSE)
+ipd_data_some_i <- ipd_data_some_i %>% 
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_some_i)
+options(datadist = "dd")
+
+res_some_i <- run_ipd_ma_i(ipd_data_some_i, noise_sd = 2, knots = s1_knot)
+
+plot_stage1(res_some_i)
+plot_res_stage1(res_some_i)
+```
+
+## many
+```{r}
+ipd_data_many_i <- read_csv("../data/generated_ipd_many.csv", show_col_types = FALSE)
+ipd_data_many_i <- ipd_data_many_i %>% 
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_many_i)
+options(datadist = "dd")
+
+res_many_i <- run_ipd_ma_i(ipd_data_many_i, noise_sd = 2, knots = s1_knot)
+
+plot_stage1(res_many_i)
+plot_res_stage1(res_many_i)
+```
+# Stage 2
+```{r}
+# weight_fun <- NULL
+# weight_fun <- function(se) 1/se      # inverse SE
+weight_fun <- function(se) 1/se^2   # inverse variance
+```
+## no
+```{r}
+d_no_i <- res_no_i$data
+d_pred_no_i <- res_no_i$pred
+pooled_no_i <- run_pooled(d_pred_no_i, s2_knot, weight_fun, "response_s")
+meta_fixed_no_i <- run_meta_fixed(d_pred_no_i, s2_knot, weight_fun, "random")
+```
+## some
+```{r}
+d_some_i <- res_some_i$data
+d_pred_some_i <- res_some_i$pred
+pooled_some_i <- run_pooled(d_pred_some_i, s2_knot, weight_fun, "response_s")
+meta_fixed_some_i <- run_meta_fixed(d_pred_some_i, s2_knot, weight_fun, "random")
+```
+## many
+```{r}
+d_many_i <- res_many_i$data
+d_pred_many_i <- res_many_i$pred
+pooled_many_i <- run_pooled(d_pred_many_i, s2_knot, weight_fun, "response_s")
+meta_fixed_many_i <- run_meta_fixed(d_pred_many_i, s2_knot, weight_fun, "random")
+```
+
+## plots
+```{r}
+p_meta_no_i <- ggplot() +
+  geom_point(data = d_no_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_no_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_no_i, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_no_i,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_no_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (no)", x = "Age", y = "Predicted Y")
+  # facet_wrap(~ study)
+
+p_meta_some_i <- ggplot() +
+  geom_point(data = d_some_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_some_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_some_i, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_some_i,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_some_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (some)", x = "Age", y = "Predicted Y")
+
+p_meta_many_i <- ggplot() +
+  geom_point(data = d_many_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_many_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_many_i, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_many_i,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_many_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (many)", x = "Age", y = "Predicted Y")
+
+p_pooled_no_i <- ggplot() +
+  geom_point(data = d_no_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_no_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_no_i, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_no_i,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_no_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (no)", x = "Age", y = "Predicted Y")
+
+p_pooled_some_i <- ggplot() +
+  geom_point(data = d_some_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_some_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_some_i, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_some_i,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_some_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (some)", x = "Age", y = "Predicted Y")
+
+p_pooled_many_i <- ggplot() +
+  geom_point(data = d_many_i, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_many_i, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_many_i, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_many_i,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_many_i$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (many)", x = "Age", y = "Predicted Y")
+```
+
+### Each Method
+```{r, fig.width=14}
+p_meta_no_i + p_meta_some_i + p_meta_many_i
+p_pooled_no_i + p_pooled_some_i + p_pooled_many_i
+```
+
+### Comparing Method
+```{r, fig.width=10}
+p_meta_no_i + p_pooled_no_i
+p_meta_some_i + p_pooled_some_i
+p_meta_many_i + p_pooled_many_i
+```
+
+### all together
+```{r, fig.width=10}
+(p_meta_no_i + p_meta_some_i + p_meta_many_i) / (p_pooled_no_i + p_pooled_some_i + p_pooled_many_i)
+```

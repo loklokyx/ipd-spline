@@ -107,8 +107,7 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE,
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
   df_sub <- df %>% filter(metric_name == !!metric_name)
   
-  
-  p <- ggplot(df_sub, aes(x = Age, y = metric_value, color = line_id)) +
+  p <- ggplot(df_sub , aes(x = Age, y = metric_value, color = line_id)) +
     geom_line(linewidth = 1) +
     geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
     facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
@@ -189,7 +188,7 @@ set_summary <- function(df_list,
     group_vars <- c("method", 
                     if ("knots" %in% names(df)) "knots" else NULL,
                     if ("rank_id" %in% names(df)) "rank_id" else NULL)
-
+    
     df <- df %>%
       group_by(across(all_of(group_vars))) %>%
       summarise(
@@ -259,30 +258,6 @@ make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
   return(rank_all)
 }
 
-make_unique_by_precision <- function(x, digits = 5) {
-  # Round first to the desired digits
-  x <- round(x, digits)
-  
-  # Small offset based on precision (e.g. digits=5 → 1e-6)
-  offset <- 10^(-(digits + 1))
-  
-  # Order to preserve original sequence
-  ord <- order(x)
-  x_sorted <- x[ord]
-  
-  # Handle duplicates
-  dup_index <- ave(x_sorted, x_sorted, FUN = seq_along)
-  
-  # Add incremental offset to duplicates
-  x_sorted <- x_sorted + (dup_index - 1) * offset
-  
-  # Revert to original order
-  x_final <- x_sorted[order(ord)]
-  
-  return(x_final)
-}
-
-
 myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
 
 OVERLAP_INPUTS <- list(
@@ -329,3 +304,125 @@ OVERLAP_INPUTS <- list(
     "6", 100, 0, myfunc, "rnorm(n, 85, 3)"
   )
 )
+
+# Get valid knot combinations
+get_valid_combinations <- function(knots_list) {
+  study_ids <- unique(CONFIG$data$Study)
+  # Get study sizes
+  study_max_n <- sapply(study_ids, function(s) sum(CONFIG$data$Study == s))
+  
+  valid_knots_per_study <- lapply(study_max_n, function(n) {
+    max_knot <- get_max_knots(n)
+    all_knots <- 3:max_knot # assume min knots = 3
+    intersect(all_knots, knots_list)
+  })
+  names(valid_knots_per_study) <- study_ids
+  
+  expand.grid(valid_knots_per_study, KEEP.OUT.ATTRS = FALSE)
+}
+
+# Stage 2: Pooled method
+run_pooled <- function(pred_data, knots = 5, weight_fun = NULL,
+                       interval = "confidence", combine = FALSE) {
+  d <- pred_data %>% mutate(weight = weight_fun(SE))
+  
+  pred_str <- make_rcs_formula("Age", make_quantiles(d$Age, knots))
+  pooled_formula <- as.formula(paste0("Y ~ ", pred_str))
+  
+  pooled_model <- ols(pooled_formula, weights = weight, data = d)
+  
+  X <- model.matrix(delete.response(terms(pooled_model)), data = d)
+  beta <- coef(pooled_model)
+  V <- as.matrix(vcov(pooled_model))
+  
+  fit <- as.numeric(X %*% beta)
+  # se_fit <- sqrt(diag(X %*% V %*% t(X)))
+  se_fit <- sqrt(rowSums((X %*% V) * X))
+  
+  if (interval == "response") {
+    resid_sd <- sqrt(sum(residuals(pooled_model)^2) / pooled_model$df.residual)
+    se_total <- sqrt(se_fit^2 + resid_sd^2)
+  } else if(interval == "response_s") {
+    resid_sd <- pooled_model$stats["Sigma"]
+    se_total <- sqrt(se_fit^2 + resid_sd^2)
+  } else {
+    se_total <- se_fit
+    # stage1_var <- tapply(pred_data$SE^2, pred_data$Age, mean)
+    # se_total <- sqrt(se_fit^2 + stage1_var[match(pred_data$Age, names(stage1_var))])
+  }
+  
+  d$Y  <- fit
+  d$lower <- fit - 1.96 * se_total
+  d$upper <- fit + 1.96 * se_total
+  d$SE <- se_total
+  if (combine) d <- combine_pointwise(d, weight_fun = weight_fun)
+  d %>% slice(match(unique(d$Age), Age))
+}
+
+# Stage 2: Meta-analysis fixed effects with weights
+run_meta_fixed <- function(pred_data, knots = 5, weight_fun = NULL,
+                           interval = "confidence", combine = FALSE) {
+  d <- pred_data %>% mutate(weight = weight_fun(SE))
+  
+  pred_str <- make_rcs_formula("Age", make_quantiles(d$Age, knots))
+  meta_formula <- as.formula(paste0("Y ~ ", pred_str, " + (1 | study)"))
+  meta_model <- lmer(meta_formula, weights = weight, data = d)
+  
+  X <- model.matrix(delete.response(terms(meta_model)), d)
+  beta <- fixef(meta_model)
+  V <- vcov(meta_model)
+  
+  fit <- as.numeric(X %*% beta)
+  se_fixed <- sqrt(rowSums((X %*% V) * X))
+  # se_fixed <- sqrt(diag(X %*% V %*% t(X)))
+  
+  if (interval == "response"){
+    se_total <- sqrt(se_fixed^2 + sigma(meta_model)^2)
+  } else if (interval == "random"){
+    var_random <- as.numeric(VarCorr(meta_model)$study)
+    se_total <- sqrt(se_fixed^2 + var_random)
+  } else{
+    se_total <- se_fixed
+  }
+  length(se_total)
+  d$Y <- fit
+  d$lower <- fit - 1.96 * se_total
+  d$upper <- fit + 1.96 * se_total
+  d$SE <- se_total
+  if (combine) d <- combine_pointwise(d, weight_fun = weight_fun)
+  d %>% slice(match(unique(d$Age), Age))
+}
+
+combine_pointwise <- function(pred_data, weight_fun = NULL) {
+  d <- pred_data
+  
+  if (!is.null(weight_fun)) {
+    d <- d %>% mutate(w = weight_fun(SE))
+    
+    d_summary <- d %>%
+      group_by(Age) %>%
+      summarise(
+        Y_pred = sum(Y * w) / sum(w),
+        var_weighted = 1 / sum(w),
+        # var_weighted = sum(w^2 * SE^2)/sum(w)^2 + 1/sum(w),
+        lower = Y_pred - 1.96 * sqrt(var_weighted),
+        upper = Y_pred + 1.96 * sqrt(var_weighted),
+        .groups = "drop"
+      )
+  } else {
+    d_summary <- d %>%
+      group_by(Age) %>%
+      summarise(
+        Y_pred = mean(Y),
+        se = sd(Y) / sqrt(n()),
+        lower = Y_pred - 1.96 * se,
+        upper = Y_pred + 1.96 * se,
+        .groups = "drop"
+      )
+  }
+  
+  d_summary %>% 
+    rename(Y = Y_pred) %>% 
+    arrange(Age) %>% 
+    slice(match(unique(d$Age), Age)) # reorder by original Age
+}

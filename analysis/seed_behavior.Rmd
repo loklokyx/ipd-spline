@@ -1,0 +1,63 @@
+---
+title: "Seed Weird Behaviour in Simulation"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+# Seed Weird Behaviour
+
+This example demonstrates how resetting the same random seed can accidentally create deterministic relationships in simulated data.
+
+## Step 1: Generate the predictor
+
+```{r}
+n <- 100
+
+set.seed(2025)
+x <- rnorm(n, 35, 5)
+
+# y_true <- 2 + 0.05 * x
+y_true <- 10 + 5 * (1 + exp((.15 * (x - 60))))^(-1)
+plot(y_true~x)
+```
+
+## Step 2: Add noise using different seeds
+
+```{r}
+n <- 100
+
+set.seed(2025)
+x <- rnorm(n, 35, 5)
+
+y_true <- 10 + 5 * (1 + exp((.15 * (x - 60))))^(-1)
+
+set.seed(2025)
+y <- y_true + .4*(x-35) # + rnorm(n, 0, 2)
+
+set.seed(2026)
+y2 <- y_true + rnorm(n, 0, 2)
+
+cor(x, y)
+cor(x, y2)
+```
+
+The first correlation is exactly 1 because the same seed was used again before generating the noise. This reproduces the identical sequence of random numbers used when generating `x`.
+
+As a result, the noise term becomes perfectly correlated with `x`, producing an artificial linear relationship.
+
+Using a different seed generates an independent random sequence, so the correlation returns to a typical value.
+
+## Step 3: Visual comparison
+
+```{r}
+plot(y ~ x, main = "Same Seed Used Twice")
+plot(y2 ~ x, main = "Different Seed Used")
+```
+
+When the same seed is reused, the points fall exactly on a straight line.
+When a different seed is used, the points show normal random variation around the true relationship.
+
+## Key takeaway
+
+In simulation studies, avoid resetting the same seed between related random draws. Instead, set the seed once at the beginning so all random numbers are generated from independent positions in the same random sequence.

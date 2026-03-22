@@ -119,7 +119,7 @@ df_plot_no <- df_plot_no %>% mutate(line_id = factor(line_id, levels = ff_line_i
 ```
 ### line plot
 ```{r}
-df_plot_no2 <- df_plot_no %>% filter(rank_id == "best1")
+# df_plot_no2 <- df_plot_no %>% filter(rank_id == "best1")
 
 plots_no <- lapply(metrics, function(m) base_plot(df_plot_no, m, ncol=2,
                                                   legend_ncol=2, legend_size=15))
@@ -136,7 +136,7 @@ ppp_no
 
 ### CI True Value
 ```{r}
-plot_CI_no <- base_plot_CI(df_plot_no2, ncol = 2,
+plot_CI_no <- base_plot_CI(df_plot_no, ncol = 2,
                            legend_ncol=2, legend_size=15)
 plot_CI_no
 ```

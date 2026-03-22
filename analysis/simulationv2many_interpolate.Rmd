@@ -1,5 +1,5 @@
 ---
-title: "Simulation Extrapolation Analysis Version 2"
+title: "Simulation Study Specific Stage 1 Analysis (Weighted Variance)"
 author: "Lok Yiu Xuan [23171563]"
 date: "`r format(Sys.Date(), '%d %B, %Y')`"
 output: html_document
@@ -15,7 +15,7 @@ source("../scripts/helpers.R")
 ```
 # Read Settings
 ```{r}
-file_dir <- "../data/extrapolate3/simulated_some/"
+file_dir <- "../data/interpolate3/simulated_many/"
 simul_settings <- read_csv(paste0(file_dir, "simul_settings.csv"), show_col_types = FALSE)
 # Exclude same knots file
 study_cols <- grep("^Study", names(simul_settings), value = TRUE)
@@ -45,14 +45,14 @@ rank_all %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
 ```{r}
-sim_data_some <- list()
+sim_data_many_i <- list()
 for (i in 1:nrow(rank_all)) {
   df_row <- rank_all[i,]
   filename <- paste0(file_dir, df_row$Name, ".csv")
   sim_df <- read_csv(filename, show_col_types = FALSE)
   stage2_knots_str <- df_row$Stage2
 
-  sim_data_some[[i]] <- sim_df %>%
+  sim_data_many_i[[i]] <- sim_df %>%
     mutate(
       stage2_quantiles_str = stage2_knots_str,
       stage2_knots = length(knots_to_numeric(stage2_knots_str)),
@@ -61,20 +61,19 @@ for (i in 1:nrow(rank_all)) {
       rank_id = df_row$rank_id
     )
 }
-names(sim_data_some) <- rank_all$Name
+names(sim_data_many_i) <- rank_all$Name
 ```
-
 ```{r}
-ggplot(sim_data_some[[1]]) +
+ggplot(sim_data_many_i[[1]]) +
   geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape=1) +
-  labs(title = "Simulated True Data (Some Overlap)", x = "Age", y = "Y",
-       color = "Study")
-  # facet_wrap(~Study, scales = "fixed")
+  labs(title = "Simulated True Data (Many Overlap)", x = "Age", y = "Y",
+       color = "Study") +
+  facet_wrap(~Study, scales = "fixed")
 ```
 
 # Calculate Metrics Reduce df
 ```{r}
-all_metrics_some <- lapply(sim_data_some, function(df) {
+all_metrics_many_i <- lapply(sim_data_many_i, function(df) {
   lapply(methods, function(m) {
     df_filtered <- df %>% filter(method == m)
     calculate_metrics(df_filtered, level = 0.95) %>%
@@ -85,14 +84,15 @@ all_metrics_some <- lapply(sim_data_some, function(df) {
 # Summary of all
 ```{r}
 metrics <- c("mse", "variance", "bias")
-# Apply summary to all_metrics_some
-summary_all_some <- set_summary(all_metrics_some, metrics = metrics)
-summary_all_some %>% arrange(method, rank_id)
+# Apply summary to all_metrics_many_i
+summary_all_many_i <- set_summary(all_metrics_many_i, metrics = metrics)
+summary_all_many_i
 ```
 # Bias, Variance, MSE plot
-```{r}
-df_all_some <- bind_rows(all_metrics_some)
-df_plot_some <- df_all_some %>%
+## n=1800
+```{r, fig.height=10, fig.width=7}
+df_all_many_i <- bind_rows(all_metrics_many_i)
+df_plot_many_i <- df_all_many_i %>%
   filter(
     method == rank_method,
     method != "meta_re"
@@ -109,21 +109,21 @@ df_plot_some <- df_all_some %>%
 ```
 ### line plot
 ```{r, fig.width=10}
-plots_some <- lapply(metrics, function(m) base_plot(df_plot_some, m, 
+plots_many_i <- lapply(metrics, function(m) base_plot(df_plot_many_i, m, 
                                                     ncol=2, legend_ncol=4))
-# plots_some
 ```
+
 ```{r, fig.width=14}
-plots_some <- lapply(metrics, function(m) base_plot(df_plot_some, m, 
+plots_many_i <- lapply(metrics, function(m) base_plot(df_plot_many_i, m, 
                                                     ncol=1, legend_ncol=2))
 wrap_plots(
-  list(plots_some[[1]], plots_some[[2]], plots_some[[3]]),
+  list(plots_many_i[[1]], plots_many_i[[2]], plots_many_i[[3]]),
   ncol=3,
 )
 ```
 
 ### CI True Value
 ```{r, fig.width=12}
-plot_CI_some <- base_plot_CI(df_plot_some, ncol = 2, legend_ncol=4, show_jitter = T)
-plot_CI_some
+plot_CI_many_i <- base_plot_CI(df_plot_many_i, ncol = 2, legend_ncol=4)
+plot_CI_many_i
 ```

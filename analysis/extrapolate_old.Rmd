@@ -14,18 +14,17 @@ library(lme4)
 library(ggplot2)
 library(patchwork)
 source("../scripts/helpers.R")
-set.seed(50)
 ```
 
 # Extrapolate
 ```{r}
-s1_knot <- 4
+s1_knot <- 3
 s2_knot <- 5
-noise_sd <- 2
 ```
 # Stage 1
 ```{r}
 run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
+  set.seed(10)
   ipd_data <- data %>%
     mutate(study = as.factor(study)) %>%
     mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd))
@@ -40,27 +39,21 @@ run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
     
     pred_str <- make_rcs_formula("Age", make_quantiles(study_data$Age, knots))
     formula_obj <- as.formula(paste0("Y ~ ", pred_str))
-    model <- ols(formula_obj, data = study_data)
-    X <- model.matrix(delete.response(terms(model)), ipd_data)
-    beta <- coef(model)
-    V <- as.matrix(vcov(model))
-
-    fit <- as.numeric(X %*% beta)
-    # se_fit <- sqrt(diag(X %*% V %*% t(X)))
-    se_fit <- sqrt(rowSums((X %*% V) * X))
-
-    # confidence interval only
-    # se_total <- se_fit
-    se_total <- sqrt(se_fit^2 + model$stats["Sigma"]^2)
+    model <- lm(formula_obj, data = study_data)
+    
+    # Predict on all data points (for pointwise combining)
+    newdata <- data.frame(Age = ipd_data$Age)
+    pred_se <- predict(model, newdata = newdata, se.fit = TRUE)
+    pred_ci <- predict(model, newdata = newdata, interval = "confidence")
 
     temp <- data.frame(
       study     = s,
       Age       = ipd_data$Age,
-      Y         = fit,
-      Y_pred    = fit,
-      lower     = fit - 1.96 * se_fit,
-      upper     = fit + 1.96 * se_fit,
-      SE        = se_total,
+      Y         = pred_se$fit,
+      Y_pred    = pred_se$fit,
+      lower     = pred_ci[, "lwr"],
+      upper     = pred_ci[, "upr"],
+      SE        = pred_se$se.fit,
       fitted    = fitted(model),
       residuals = residuals(model)
     )
@@ -107,7 +100,7 @@ ipd_data_no <- ipd_data_no %>%
 dd <- datadist(ipd_data_no)
 options(datadist = "dd")
 
-res_no <- run_ipd_ma(ipd_data_no, noise_sd, knots = s1_knot)
+res_no <- run_ipd_ma(ipd_data_no, noise_sd = 2, knots = s1_knot)
 # res_no <- run_ipd_ma(ipd_data_no, noise_sd = 0.1, knots = 3)
 # ggplot(res_no$data, aes(x = Age, y = Y, color = study)) +
 #   geom_point(alpha = 0.6) +
@@ -125,7 +118,7 @@ ipd_data_some <- ipd_data_some %>%
 dd <- datadist(ipd_data_some)
 options(datadist = "dd")
 
-res_some <- run_ipd_ma(ipd_data_some, noise_sd, knots = s1_knot)
+res_some <- run_ipd_ma(ipd_data_some, noise_sd = 2, knots = s1_knot)
 
 plot_stage1(res_some)
 plot_res_stage1(res_some)
@@ -140,35 +133,75 @@ ipd_data_many <- ipd_data_many %>%
 dd <- datadist(ipd_data_many)
 options(datadist = "dd")
 
-res_many <- run_ipd_ma(ipd_data_many, noise_sd, knots = s1_knot)
+res_many <- run_ipd_ma(ipd_data_many, noise_sd = 2, knots = s1_knot)
 
 plot_stage1(res_many)
 plot_res_stage1(res_many)
 ```
 # Stage 2
 ```{r}
+# weight_fun <- NULL
+# weight_fun <- function(se) 1/se      # inverse SE
 weight_fun <- function(se) 1/se^2   # inverse variance
+```
+
+## func
+```{r}
+run_pooled <- function(pred_data, knots = 5, weight_fun = NULL, interval = "") {
+  d <- pred_data
+  # d$study <- factor(1)
+  combine_pointwise(d, weight_fun = weight_fun)
+}
+
+run_meta_fixed <- function(pred_data, knots = 5, weight_fun = NULL, interval = "") {
+  d <- pred_data
+  d <- d %>% mutate(weight = if (!is.null(weight_fun)) weight_fun(SE) else 1)
+
+  pred_str <- make_rcs_formula("Age", make_quantiles(d$Age, s2_knot))
+  meta_formula <- as.formula(paste0("Y ~ ", pred_str, " + (1 | study)"))
+  meta_model <- lmer(meta_formula, weights = weight, data = d)
+  
+  pred <- predict(meta_model, newdata = d, re.form = NULL, se.fit = TRUE)
+  d$Y <- pred$fit
+  sigma_hat <- summary(meta_model)$sigma
+
+  # d$SE <- sigma_hat / sqrt(d$weight)
+  # combine_pointwise(d, weight_fun = weight_fun)
+
+  # approximate SE using residual sigma and weights
+  # Get weights for prediction points
+  pred_with_weights <- d %>%
+    group_by(Age) %>%
+    summarise(mean_weight = mean(weight), .groups = "drop")
+  
+  d <- d %>%
+    left_join(pred_with_weights, by = "Age") %>%
+    mutate(SE = sigma_hat / sqrt(mean_weight))
+  
+  # Combine pointwise
+  combine_pointwise(d, weight_fun = weight_fun)
+}
 ```
 ## no
 ```{r}
 d_no <- res_no$data
 d_pred_no <- res_no$pred
-pooled_no <- run_pooled(d_pred_no, s2_knot, weight_fun, "response_s", T)
-meta_fixed_no <- run_meta_fixed(d_pred_no, s2_knot, weight_fun, "random", T)
+pooled_no <- run_pooled(d_pred_no, weight_fun = weight_fun)
+meta_fixed_no <- run_meta_fixed(d_pred_no, weight_fun = weight_fun)
 ```
 ## some
 ```{r}
 d_some <- res_some$data
 d_pred_some <- res_some$pred
-pooled_some <- run_pooled(d_pred_some, s2_knot, weight_fun, "response_s", T)
-meta_fixed_some <- run_meta_fixed(d_pred_some, s2_knot, weight_fun, "random", T)
+pooled_some <- run_pooled(d_pred_some, weight_fun = weight_fun)
+meta_fixed_some <- run_meta_fixed(d_pred_some, weight_fun = weight_fun)
 ```
 ## many
 ```{r}
 d_many <- res_many$data
 d_pred_many <- res_many$pred
-pooled_many <- run_pooled(d_pred_many, s2_knot, weight_fun, "response_s", T)
-meta_fixed_many <- run_meta_fixed(d_pred_many, s2_knot,weight_fun, "random", T)
+pooled_many <- run_pooled(d_pred_many, weight_fun = weight_fun)
+meta_fixed_many <- run_meta_fixed(d_pred_many, weight_fun = weight_fun)
 ```
 
 ## plots
@@ -203,7 +236,9 @@ p_meta_many <- ggplot() +
               fill = "red", alpha = 0.2) +
   geom_vline(xintercept = make_quantiles(ipd_data_many$Age, knot = s2_knot), linetype = "dashed") +
   labs(title = "Meta (many)", x = "Age", y = "Predicted Y")
+```
 
+```{r}
 p_pooled_no <- ggplot() +
   geom_point(data = d_no, aes(x = Age, y = Y, color = study), alpha = 0.5) +
   geom_line(data = ipd_data_no, aes(x = Age, y = Y), color = "black", linewidth = 1) +
@@ -236,11 +271,10 @@ p_pooled_many <- ggplot() +
 ```
 
 ### Each Method
-```{r, fig.width=14, fig.height=7}
+```{r, fig.width=14}
 p_meta_no + p_meta_some + p_meta_many
 p_pooled_no + p_pooled_some + p_pooled_many
 ```
-
 
 ### Comparing Method
 ```{r, fig.width=10}
@@ -254,42 +288,3 @@ p_meta_many + p_pooled_many
 (p_meta_no + p_meta_some + p_meta_many) / (p_pooled_no + p_pooled_some + p_pooled_many)
 ```
 
-
-## diagnostic
-```{r}
-# pp <- c()
-# pp2 <- c()
-# i <- 1
-# 
-# ddd <- list(No = d_pred_no, Some = d_pred_some, Many = d_pred_many)
-# # ddd <- list(d_pred_no)
-# for (nm in names(ddd)) {
-#   d <- ddd[[nm]]
-#   d <- d %>% mutate(w = if (!is.null(weight_fun)) weight_fun(SE) else 1)
-#   
-#   check_sumw <- d %>%
-#     group_by(Age) %>%
-#     summarise(sum_w = sum(w),
-#               n_models = n())
-#   
-#   check_se <- d %>%
-#     group_by(Age) %>%
-#     summarise(mean_se = mean(SE),
-#               max_se = max(SE))
-#   
-#   knot_quan <- make_quantiles(d$Age, knot = s1_knot)
-#   pp[[i]] <- ggplot(check_sumw, aes(Age, sum_w)) +
-#     geom_line() +
-#     geom_vline(xintercept = knot_quan, linetype = "dashed") +
-#     labs(title = nm)
-# 
-#   pp2[[i]] <- ggplot(check_se, aes(Age, mean_se)) +
-#     geom_line() +
-#     geom_vline(xintercept = knot_quan, linetype = "dashed") +
-#     labs(title = nm)
-#   i <- i + 1
-# }
-# 
-# (pp[[1]] + pp[[2]] + pp[[3]]) / 
-# (pp2[[1]] + pp2[[2]] + pp2[[3]])
-```
