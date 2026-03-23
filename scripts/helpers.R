@@ -101,6 +101,100 @@ is_same_knots <- function(row) {
   })
   length(unique(study_lengths)) == 1   # TRUE if all equal, FALSE if not
 }
+
+library(stringr)
+arrange_knots <- function(df, base_knot = NULL) {
+  # Extract first part and remove "study"
+  codes <- str_remove(str_split_fixed(df$Name, "_", 2)[,1], "study")
+  # Split each code into digits
+  code_digits <- str_split(codes, "", simplify = TRUE)
+  # Determine unique knots used
+  knots_settings <- sort(unique(as.numeric(as.vector(code_digits))))
+  # Precompute number of occurrences of each knot in each code
+  knot_counts <- sapply(knots_settings, function(k) rowSums(code_digits == k))
+  colnames(knot_counts) <- knots_settings
+  
+  final_order <- c()
+  # Loop over knots in ascending order
+  for(k in knots_settings) {
+    # Codes that contain this knot
+    sub_codes <- df$Name[knot_counts[, as.character(k)] > 0]
+    # Remove already added codes
+    sub_codes <- setdiff(sub_codes, final_order)
+    max_n <- ncol(code_digits)
+    # Loop from max_n down to 1
+    for(n in max_n:1) {
+      codes_n <- sub_codes[knot_counts[match(sub_codes, df$Name), as.character(k)] == n]
+      final_order <- c(final_order, codes_n)
+      sub_codes <- setdiff(sub_codes, codes_n)
+    }
+  }
+  
+  df_ordered <- df %>% slice(match(final_order, Name))
+  # optional grouping
+  if(!is.null(base_knot)) {
+    counts <- knot_counts[
+      match(df_ordered$Name, df$Name),
+      as.character(base_knot)
+    ]
+    df_ordered$group_base <- paste0(counts, " of k = ", base_knot) 
+  }
+  return(df_ordered)
+}
+
+plot_CI_coverage <- function(df, arrange_by = "name", base_knot = NULL,
+                             stat_pos = NULL){
+  library(ggplot2)
+  library(dplyr)
+  
+  mean_pooled <- mean(df$Coverage_pooled, na.rm = TRUE)
+  range_pooled <- range(df$Coverage_pooled, na.rm = TRUE)
+  mean_meta <- mean(df$Coverage_meta, na.rm = TRUE)
+  range_meta <- range(df$Coverage_meta, na.rm = TRUE)
+  
+  arrange_by <- tolower(arrange_by)
+  if(arrange_by == "name") {
+    df <- df %>% arrange(Name)
+  } else if(arrange_by == "knots") {
+    df <- arrange_knots(df, base_knot)
+  }
+  
+  df$Name <- factor(df$Name, levels = df$Name)
+  n <- length(df$Name)
+  my_form <- function(m, r) sprintf("mean: %.3f [%.3f, %.3f]", m, r[1], r[2])
+  
+  p <- ggplot(df) + 
+    geom_line(aes(x = Name, y = Coverage_pooled, group = 1, color = "pooled")) + 
+    geom_line(aes(x = Name, y = Coverage_meta, group = 1, color = "meta")) +
+    scale_color_manual(values = c("pooled" = "red", "meta" = "blue")) +
+    theme(axis.text.x = element_text(angle = 90)) +
+    ylab("95% CI Coverage")
+  
+  # add grouping only if requested
+  if(arrange_by == "knots" && !is.null(base_knot)) {
+    p <- p + 
+      geom_point(aes(x = Name, y = Coverage_pooled, fill = factor(group_base)),
+                 shape = 21, size = 2.5, color = "black") +
+      geom_point(aes(x = Name, y = Coverage_meta, fill = factor(group_base)),
+                 shape = 21, size = 2.5, color = "black") +
+      labs(fill = "Stage 1 Knot Counts")
+  }
+  
+  if(!is.null(stat_pos)) {
+    stat_pos <- tolower(stat_pos)
+    pos_index <- switch(stat_pos,
+                        "start"  = 1 + 8, 
+                        "middle" = ceiling(n / 2), 
+                        "end"    = n - 8, 0)
+    p <- p +
+      annotate("text", x = pos_index, y = mean_pooled, color = "darkgreen",
+               label = my_form(mean_pooled, range_pooled)) + 
+      annotate("text", x = pos_index, y = mean_meta, color = "darkgreen",
+               label = my_form(mean_meta, range_meta))
+  }
+  p
+}
+
 # Base plot template
 base_plot <- function(df, metric_name, ncol, fix_y = TRUE, 
                       legend = TRUE, legend_ncol=1, legend_size=14) {
@@ -324,12 +418,16 @@ get_valid_combinations <- function(knots_list) {
 # Stage 2: Pooled method
 run_pooled <- function(pred_data, knots = 5, weight_fun = NULL,
                        interval = "confidence", combine = FALSE) {
-  d <- pred_data %>% mutate(weight = weight_fun(SE))
-  
-  pred_str <- make_rcs_formula("Age", make_quantiles(d$Age, knots))
+  pred_str <- make_rcs_formula("Age", make_quantiles(pred_data$Age, knots))
   pooled_formula <- as.formula(paste0("Y ~ ", pred_str))
   
-  pooled_model <- ols(pooled_formula, weights = weight, data = d)
+  if (is.null(weight_fun)) {
+    d <- pred_data
+    pooled_model <- ols(pooled_formula, data = d)
+  } else {
+    d <- pred_data %>% mutate(weight = weight_fun(SE))
+    pooled_model <- ols(pooled_formula, weights = weight, data = d)
+  }
   
   X <- model.matrix(delete.response(terms(pooled_model)), data = d)
   beta <- coef(pooled_model)
@@ -362,11 +460,16 @@ run_pooled <- function(pred_data, knots = 5, weight_fun = NULL,
 # Stage 2: Meta-analysis fixed effects with weights
 run_meta_fixed <- function(pred_data, knots = 5, weight_fun = NULL,
                            interval = "confidence", combine = FALSE) {
-  d <- pred_data %>% mutate(weight = weight_fun(SE))
-  
-  pred_str <- make_rcs_formula("Age", make_quantiles(d$Age, knots))
+  pred_str <- make_rcs_formula("Age", make_quantiles(pred_data$Age, knots))
   meta_formula <- as.formula(paste0("Y ~ ", pred_str, " + (1 | study)"))
-  meta_model <- lmer(meta_formula, weights = weight, data = d)
+
+  if (is.null(weight_fun)) {
+    d <- pred_data
+    meta_model <- lmer(meta_formula, data = d)
+  } else {
+    d <- pred_data %>% mutate(weight = weight_fun(SE))
+    meta_model <- lmer(meta_formula, weights = weight, data = d)
+  }
   
   X <- model.matrix(delete.response(terms(meta_model)), d)
   beta <- fixef(meta_model)

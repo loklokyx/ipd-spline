@@ -13,8 +13,7 @@ library(rms)
 library(lme4)
 library(ggplot2)
 source("../scripts/helpers.R")
-# set.seed(23861827)
-set.seed(2026)
+set.seed(23861827)
 ```
 
 ```{r}
@@ -156,55 +155,26 @@ ggplot(residuals_df, aes(x = fitted, y = residuals)) +
 # Stage 2
 ## Method 1: Combine all studies as 1 pooled dataset
 ```{r}
-combined_data <- pred_ori_data
-# combined_data$study <- 1
-combined_pred_str <- make_rcs_formula("Age", make_quantiles(combined_data$Age, knot = 5))
-pooled_formula <- as.formula(paste0("Y ~ ", combined_pred_str))
-pooled_model <- ols(pooled_formula, data = combined_data)
-
-pred1 <- predict(pooled_model, newdata = combined_data, se.fit=T)
-combined_data$Y_pred <- pred1$linear.predictors
-
-resid_sd <- sqrt(sum(residuals(pooled_model)^2) / pooled_model$df.residual)
-se_total <- sqrt(pred1$se.fit^2 + resid_sd^2)
-
-combined_data$lower <- pred1$linear.predictors - 1.96 * se_total
-combined_data$upper <- pred1$linear.predictors + 1.96 * se_total
-```
-### weighted
-```{r}
-weight_fun <- function(se) 1/se^2   # inverse variance
-combined_data_w <- run_pooled(pred_ori_data, 5, weight_fun, "response")
+combined_data <- run_pooled(pred_ori_data, 5, NULL, "response_s")
 ```
 
 ## Method 2: Meta-analysis using per-study predicted splines
 ```{r}
 meta_data <- pred_ori_data
-
-meta_formula <- as.formula(paste0("Y ~ ", combined_pred_str, "+ (1 | study)"))
-meta_model <- lmer(meta_formula, data = meta_data)
-
-meta_pred <- predict(meta_model, newdata = meta_data, re.form = NA, se.fit = TRUE)
-meta_data$Y_pred <- meta_pred$fit
-
-meta_data$lower <- meta_pred$fit - 1.96 * meta_pred$se.fit
-meta_data$upper <- meta_pred$fit + 1.96 * meta_pred$se.fit
+meta_data <- run_meta_fixed(pred_ori_data, 5, NULL, "random")
 ```
-### weighted
-```{r}
-meta_data_w <- run_meta_fixed(pred_ori_data, 5, weight_fun)
-```
+
 ## combine
 ```{r}
 ggplot() +
   geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.3) +
   geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
-  geom_line(data = combined_data, aes(x = Age, y = Y_pred),
+  geom_line(data = combined_data, aes(x = Age, y = Y),
             color = "blue", linewidth = 1) +
   geom_ribbon(data = combined_data %>% arrange(Age),
             aes(x = Age, ymin = lower, ymax = upper),
             fill = "blue", alpha = 0.2) +
-  geom_line(data = meta_data, aes(x = Age, y = Y_pred),
+  geom_line(data = meta_data, aes(x = Age, y = Y),
             color = "red", linewidth = 1.0) +
   geom_ribbon(data = meta_data %>% arrange(Age),
             aes(x = Age, ymin = lower, ymax = upper),
@@ -215,31 +185,12 @@ ggplot() +
     title = "Stage 2: Pooled(Blue) vs Meta-Analysed(Red)",
     y = "Predicted Y"
   )
-
-# weighted
-ggplot() +
-  geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.3) +
-  geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
-  geom_line(data = combined_data_w, aes(x = Age, y = Y),
-            color = "blue", linewidth = 1) +
-  geom_ribbon(data = combined_data_w,
-            aes(x = Age, ymin = lower, ymax = upper),
-            fill = "blue", alpha = 0.2) +
-  geom_line(data = meta_data_w, aes(x = Age, y = Y),
-            color = "red", linewidth = 1.0) +
-  geom_ribbon(data = meta_data_w,
-            aes(x = Age, ymin = lower, ymax = upper),
-            fill = "red", alpha = 0.2) +
-  geom_vline(xintercept = make_quantiles(combined_data$Age, knot = 5),
-             linetype = "dashed", color = "grey40") +
-  labs(
-    title = "Stage 2: Pooled(Blue) vs Meta-Analysed(Red)",
-    y = "Predicted Y with weights"
-  )
 ```
 
 ## Method 3: random effect
 ```{r}
+combined_pred_str <- make_rcs_formula("Age", make_quantiles(combined_data$Age, knot = 5))
+
 meta_data_re <- pred_ori_data
 
 meta_formula <- as.formula(paste0("Y ~ ", combined_pred_str, " + (1 | study)"))
@@ -255,26 +206,6 @@ ggplot(meta_data_re) +
   labs(
     title = "Stage 2: Meta-Analysed Including Study RE",
     y = "Predicted Y"
-  )
-```
-### weighted
-```{r}
-meta_data_w_r <- run_meta_fixed(pred_ori_data, 5, weight_fun, "random")
-
-# weighted
-ggplot() +
-  geom_point(data = ipd_data, aes(x = Age, y = Y, color = Study), alpha = 0.3) +
-  geom_line(data = plot_data, aes(x = X1, y = Y), color = "black", linewidth = 1) +
-  geom_line(data = meta_data_w_r, aes(x = Age, y = Y),
-            color = "red", linewidth = 1.0) +
-  geom_ribbon(data = meta_data_w_r,
-            aes(x = Age, ymin = lower, ymax = upper),
-            fill = "red", alpha = 0.2) +
-  geom_vline(xintercept = make_quantiles(combined_data$Age, knot = 5),
-             linetype = "dashed", color = "grey40") +
-  labs(
-    title = "Stage 2: Pooled(Blue) vs Meta-Analysed(Red)",
-    y = "Predicted Y with weights"
   )
 ```
 

@@ -1,5 +1,5 @@
 ---
-title: "Simulation Analysis"
+title: "Simulation Without Weights"
 author: "Lok Yiu Xuan [23171563]"
 date: "`r format(Sys.Date(), '%d %B, %Y')`"
 output: html_document
@@ -8,189 +8,243 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
-library(ggplot2)
+library(splines)
 library(rms)
+library(lme4)
+library(ggplot2)
+library(patchwork)
 source("../scripts/helpers.R")
+set.seed(80)
 ```
 
-# Read Simulation Data
+# Interpolate
 ```{r}
-files <- list(
-  pooled_knots3 = "../data/1800/pooled_knots3.csv", 
-  meta_knots3 = "../data/1800/meta_knots3.csv",
-  
-  pooled_knots4 = "../data/1800/pooled_knots4.csv", 
-  meta_knots4 = "../data/1800/meta_knots4.csv",
-  
-  pooled_knots5 = "../data/1800/pooled_knots5.csv", 
-  meta_knots5 = "../data/1800/meta_knots5.csv"
-)
-sim_data <- lapply(files, read_csv, show_col_types = FALSE)
-
-files2 <- list(
-  pooled_knots3 = "../data/600/pooled_knots3.csv", 
-  meta_knots3 = "../data/600/meta_knots3.csv",
-  
-  pooled_knots4 = "../data/600/pooled_knots4.csv", 
-  meta_knots4 = "../data/600/meta_knots4.csv"
-)
-sim_data2 <- lapply(files2, read_csv, show_col_types = FALSE)
+s1_knot <- 4
+s2_knot <- 5
 ```
-# Calculate Metrics Reduce df
+# Stage 1
 ```{r}
-calculate_metrics <- function(df, level = 0.95) {
-  # identify simulation columns
-  sim_cols <- grep("^sim_", names(df), value = TRUE)
-  Y_true <- df$Y
+run_ipd_ma <- function(data, noise_sd = 0.1, knots = 3) {
+  ipd_data <- data %>%
+    mutate(study = as.factor(study)) %>%
+    mutate(Y = Y + rnorm(n(), mean = 0, sd = noise_sd)) %>%
+    group_by(study)
+    
+  # Fit study-specific spline models
+  studies <- unique(ipd_data$study)
+  pred_data <- data.frame()
   
-  alpha <- 1 - level
-  z_val <- qnorm(1 - alpha / 2)
-  
-  # extract simulation matrix for easier computation
-  sim_matrix <- as.matrix(df[, sim_cols])
-  row_means <- rowMeans(sim_matrix)
-  row_vars <- apply(sim_matrix, 1, var)
-  row_mses <- rowMeans((sim_matrix - Y_true)^2)
+  for (s_idx in seq_along(studies)) {
+    s <- studies[s_idx]
+    study_data <- subset(ipd_data, study == s)
+    
+    pred_str <- make_rcs_formula("Age", make_quantiles(study_data$Age, knots))
+    formula_obj <- as.formula(paste0("Y ~ ", pred_str))
+    model <- ols(formula_obj, data = study_data)
 
-  tibble(
-    Age = df$Age,
-    Y_true = Y_true,
-    bias = row_means - Y_true,
-    variance = row_vars,
-    mse = row_mses,
-    mean_pred = row_means,
-    residual = Y_true - row_means,
-    lower_ci = row_means - z_val * sqrt(row_vars),
-    upper_ci = row_means + z_val * sqrt(row_vars)
-  )
+    X <- model.matrix(delete.response(terms(model)), study_data)
+    beta <- coef(model)
+    V <- as.matrix(vcov(model))
+
+    fit <- as.numeric(X %*% beta)
+    se_fit <- sqrt(rowSums((X %*% V) * X))
+
+    temp <- data.frame(
+      study     = s,
+      Age       = study_data$Age,
+      Y         = fit,
+      Y_pred    = fit,
+      lower     = fit - 1.96 * se_fit,
+      upper     = fit + 1.96 * se_fit,
+      fitted    = fitted(model),
+      residuals = residuals(model)
+    )
+    pred_data <- rbind(pred_data, temp)
+  }
+  return(list(
+    data = ipd_data,
+    pred = pred_data
+  ))
 }
 
-# Apply to all files in a list
-metrics_list <- lapply(sim_data, calculate_metrics, level = 0.95)
-metrics_list2 <- lapply(sim_data2, calculate_metrics, level = 0.95)
-
-# Add method name to each element if not already
-for (i in seq_along(metrics_list)) {
-  metrics_list[[i]]$method <- names(metrics_list)[i]
+plot_stage1 <- function(result, knot = 3){
+  knots_q <- make_quantiles(result$data$Age, knot = knot)
+  ggplot() +
+    geom_point(data = result$data, alpha = 0.7,
+               aes(x = Age, y = Y, color = study), shape=1) +
+    geom_line(data = result$pred,
+              aes(x = Age, y = Y, group = study),
+              linewidth = 1, alpha = 0.8, color = "blue") +
+    geom_ribbon(data = result$pred,
+                aes(x = Age, ymin = lower, ymax = upper, group = study),
+                alpha = 0.5, fill = "lightblue", color = NA) +
+    # geom_vline(xintercept = knots_q, linetype = "dashed", color = "red") +
+    labs(title = "Study-specific spline fits with observed data",
+         x = "Age", y = "Y") +
+    facet_wrap(~ study, scales = "free_y")
 }
-for (i in seq_along(metrics_list2)) {
-  metrics_list2[[i]]$method <- names(metrics_list2)[i]
+
+plot_res_stage1 <- function(result){
+  ggplot(result$pred, aes(x = fitted, y = residuals)) +
+    geom_point(alpha = 0.6) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    facet_wrap(~study, scales = "free_x") +
+    labs(title = "Stage 1 Residuals vs Fitted", x = "Fitted", y = "Residuals")
 }
 ```
 
+## no
 ```{r}
-my_knot = 5
-ddd <- metrics_list$pooled_knots3
-pred_str <- make_rcs_formula("Age", make_quantiles(combined_data$Age, my_knot))
-formula_obj <- as.formula(paste0("Y_true ~ ", pred_str))
-fit <- ols(formula_obj, data = ddd)
-ddd$Y_fit <- predict(fit)
-ddd %>%
-  select(Age, Y_true, Y_fit) %>%
-  pivot_longer(cols = starts_with("Y"), names_to = "Method", values_to = "Y") %>%
-  ggplot(aes(x = Age, y = Y, color = Method)) +
-  geom_line(linewidth = 1) +
-  geom_vline(
-    xintercept = c(34.5, 40.7, 54, 68.1, 82.3), 
-    linetype = "dashed", color = "grey40")
+ipd_data_no <- read_csv("../data/generated_ipd_no.csv", show_col_types = FALSE)
+ipd_data_no <- ipd_data_no %>%
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_no)
+options(datadist = "dd")
+
+res_no <- run_ipd_ma(ipd_data_no, noise_sd = 2, knots = s1_knot)
+# res_no <- run_ipd_ma(ipd_data_no, noise_sd = 0.1, knots = 3)
+# ggplot(res_no$data, aes(x = Age, y = Y, color = study)) +
+#   geom_point(alpha = 0.6) +
+#   labs(title = "Observed data by Study",
+#        x = "Age", y = "Y")
+plot_stage1(res_no)
+plot_res_stage1(res_no)
 ```
-# Summary of all
+## some
 ```{r}
-metrics <- c("bias", "variance", "mse")
-summ <- set_summary(metrics_list, metrics = metrics, prefix = 'n1800')
-summ2 <- set_summary(metrics_list2, metrics = metrics, prefix = 'n600')
+ipd_data_some <- read_csv("../data/generated_ipd_some.csv", show_col_types = FALSE)
+ipd_data_some <- ipd_data_some %>% 
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_some)
+options(datadist = "dd")
 
-combined_summary <- rbind(summ, summ2)
+res_some <- run_ipd_ma(ipd_data_some, noise_sd = 2, knots = s1_knot)
 
-# reorder columns
-combined_summary <- combined_summary %>%
-  select(method, everything())
-combined_summary
-```
-# Bias, Variance, MSE plot
-## n=1800
-### line plot
-```{r, fig.height=7, fig.width=7}
-df_all <- bind_rows(metrics_list) %>%
-  pivot_longer(cols = c("bias", "variance", "mse"),
-               names_to = "metric_name",
-               values_to = "metric_value")
-df_all$base_method <- word(df_all$method, 1, sep = "_")
-df_all$knots <- word(df_all$method, 2, sep = "_")
-
-ggplot(df_all, aes(x = Age, y = metric_value, color = base_method)) +
-  geom_line(size = 1) +
-  facet_grid(metric_name ~ knots, scales = "free") +
-  labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
-  theme(
-    legend.position = "bottom",
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "white")
-  )
-```
-### CI True Value
-```{r, fig.height=7, fig.width=5}
-ggplot(df_all, aes(x = Age, y = mean_pred, color = base_method, fill = base_method, group)) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
-  geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1) 
-  labs(
-    x = "Age",
-    y = "Predicted Y",
-    color = "Method",
-    fill = "Method",
-    title = "Predicted Values with Confidence Intervals by Knots"
-  ) +
-  theme(
-    legend.position = "bottom",
-    panel.spacing = unit(1.5, "lines"),
-    strip.background = element_rect(fill = "white")
-  )
+plot_stage1(res_some)
+plot_res_stage1(res_some)
 ```
 
-## n=600
-### line plot
-```{r, fig.height=7, fig.width=7}
-df_all2 <- bind_rows(metrics_list2) %>%
-  pivot_longer(cols = c("bias", "variance", "mse"),
-               names_to = "metric_name",
-               values_to = "metric_value")
-df_all2$base_method <- word(df_all2$method, 1, sep = "_")
-df_all2$knots <- word(df_all2$method, 2, sep = "_")
-
-ggplot(df_all2, aes(x = Age, y = metric_value, color = base_method)) +
-  geom_line(size = 1) +
-  facet_grid(metric_name ~ knots, scales = "free_y")
-  labs(x = "Age", y = "Value", fill = "Base Method", color = "Method") +
-  theme(
-    legend.position = "bottom",
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "white")
-  )
-```
-### CI True Value
-```{r, fig.height=7, fig.width=5}
-ggplot(df_all2, aes(x = Age, y = mean_pred, color = base_method, fill = base_method)) +
-  geom_line(size = 1) +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), alpha = 0.2, color = NA) +
-  geom_line(aes(y = Y_true), color = "black", linetype = "dashed") +
-  facet_wrap(~knots, ncol = 1) +
-  labs(
-    x = "Age",
-    y = "Predicted Y",
-    color = "Method",
-    fill = "Method",
-    title = "Predicted Values with Confidence Intervals by Knots"
-  ) +
-  theme(
-    legend.position = "bottom",
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "white")
-  )
-```
-
+## many
 ```{r}
-# getAnywhere(predict.merMod)
+ipd_data_many <- read_csv("../data/generated_ipd_many.csv", show_col_types = FALSE)
+ipd_data_many <- ipd_data_many %>% 
+  rename(study = Study) %>% 
+  mutate(study = as.factor(study))
+dd <- datadist(ipd_data_many)
+options(datadist = "dd")
+
+res_many <- run_ipd_ma(ipd_data_many, noise_sd = 2, knots = s1_knot)
+
+plot_stage1(res_many)
+plot_res_stage1(res_many)
+```
+# Stage 2
+```{r}
+weight_fun <- NULL
+```
+## no
+```{r}
+d_no <- res_no$data
+d_pred_no <- res_no$pred
+pooled_no <- run_pooled(d_pred_no, s2_knot, weight_fun, "response_s")
+meta_fixed_no <- run_meta_fixed(d_pred_no, s2_knot, weight_fun, "")
+```
+## some
+```{r}
+d_some <- res_some$data
+d_pred_some <- res_some$pred
+pooled_some <- run_pooled(d_pred_some, s2_knot, weight_fun, "response_s")
+meta_fixed_some <- run_meta_fixed(d_pred_some, s2_knot, weight_fun, "")
+```
+## many
+```{r}
+d_many <- res_many$data
+d_pred_many <- res_many$pred
+pooled_many <- run_pooled(d_pred_many, s2_knot, weight_fun, "response_s")
+meta_fixed_many <- run_meta_fixed(d_pred_many, s2_knot, weight_fun, "")
 ```
 
+## plots
+```{r}
+p_meta_no <- ggplot() +
+  geom_point(data = d_no, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_no, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_no, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_no,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_no$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (no)", x = "Age", y = "Predicted Y")
+  # facet_wrap(~ study)
+
+p_meta_some <- ggplot() +
+  geom_point(data = d_some, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_some, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_some, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_some,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_some$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (some)", x = "Age", y = "Predicted Y")
+
+p_meta_many <- ggplot() +
+  geom_point(data = d_many, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_many, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = meta_fixed_many, aes(x = Age, y = Y), color = "red", linewidth = 1) +
+  geom_ribbon(data = meta_fixed_many,
+              aes(x = Age, ymin = lower, ymax = upper),
+              fill = "red", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_many$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Meta (many)", x = "Age", y = "Predicted Y")
+
+p_pooled_no <- ggplot() +
+  geom_point(data = d_no, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_no, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_no, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_no,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_no$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (no)", x = "Age", y = "Predicted Y")
+
+p_pooled_some <- ggplot() +
+  geom_point(data = d_some, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_some, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_some, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_some,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_some$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (some)", x = "Age", y = "Predicted Y")
+
+p_pooled_many <- ggplot() +
+  geom_point(data = d_many, aes(x = Age, y = Y, color = study), alpha = 0.5) +
+  geom_line(data = ipd_data_many, aes(x = Age, y = Y), color = "black", linewidth = 1) +
+  geom_line(data = pooled_many, aes(x = Age, y = Y), color = "blue", linewidth = 1) +
+  geom_ribbon(data = pooled_many,
+            aes(x = Age, ymin = lower, ymax = upper),
+            fill = "blue", alpha = 0.2) +
+  geom_vline(xintercept = make_quantiles(ipd_data_many$Age, s2_knot), linetype = "dashed") +
+  labs(title = "Pooled (many)", x = "Age", y = "Predicted Y")
+```
+
+### Each Method
+```{r, fig.width=14}
+p_meta_no + p_meta_some + p_meta_many
+p_pooled_no + p_pooled_some + p_pooled_many
+```
+
+### Comparing Method
+```{r, fig.width=10}
+p_meta_no + p_pooled_no
+p_meta_some + p_pooled_some
+p_meta_many + p_pooled_many
+```
+
+
+### all together
+```{r, fig.width=10}
+(p_meta_no + p_meta_some + p_meta_many) / (p_pooled_no + p_pooled_some + p_pooled_many)
+```

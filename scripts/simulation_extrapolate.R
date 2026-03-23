@@ -156,7 +156,7 @@ run_full_simulation <- function() {
       # Run all simulations
       all_results <- future_lapply(seq_len(CONFIG$n_sim), function(sim_i) {
         run_single_simulation(sim_i, study_ids, stage1_knots_vec, stage2_knots)
-      })
+      }, future.seed=TRUE)
 
       # Save results
       results_info <- save_simulation_results(all_results, filename)

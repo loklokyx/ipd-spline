@@ -14,37 +14,48 @@ source("../scripts/helpers.R")
 ```
 # Read Settings
 ```{r}
-file_dir <- "../data/simulated_many/"
-simul_settings <- read_csv(paste0(file_dir, "simul_settings.csv"), show_col_types = FALSE)
+file_dir_many <- "../data/simulate3/simulated_many/"
+simul_settings_many <- read_csv(paste0(file_dir_many, "simul_settings.csv"), show_col_types = FALSE)
 # Exclude same knots file
-study_cols <- grep("^Study", names(simul_settings), value = TRUE)
+study_cols <- grep("^Study", names(simul_settings_many), value = TRUE)
 
 # Apply filter
-simul_settings <- simul_settings[!apply(simul_settings, 1, is_same_knots), ]
+# simul_settings_many <- simul_settings_many[!apply(simul_settings_many, 1, is_same_knots), ]
+```
+
+# Compare
+## Method
+```{r}
+ggplot(simul_settings_many, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
+```
+## CI Coverage
+```{r, fig.width = 14, fig.height = 8}
+plot_CI_coverage(simul_settings_many)
+plot_CI_coverage(simul_settings_many, arrange_by = "knots")
 ```
 
 ```{r}
 exclude_cols <- c("Stage2", 
-                  grep("^MSE", names(simul_settings), value = TRUE), 
-                  grep("^Study", names(simul_settings), value = TRUE), 
-                  grep("^Rank_", names(simul_settings), value = TRUE))
+                  grep("^MSE", names(simul_settings_many), value = TRUE), 
+                  grep("^Study", names(simul_settings_many), value = TRUE), 
+                  grep("^Rank_", names(simul_settings_many), value = TRUE))
 
 top_n <- 1
-worst_n <- 1
-rank_all <- make_rank_all(simul_settings, top_n, worst_n)
+worst_n <- 0
+rank_all_many <- make_rank_all(simul_settings_many, top_n, worst_n)
 
-rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
+rank_cols <- grep("^Rank_", names(simul_settings_many), value = TRUE)
 # Factor with desired order
-methods <- unique(rank_all$rank_method)
+methods <- unique(rank_all_many$rank_method)
 lvls <- c(paste0("best", 1:top_n), paste0("worst", worst_n:1))
-rank_all %>% dplyr::select(-all_of(exclude_cols))
+rank_all_many %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
 ```{r}
 sim_data_many <- list()
-for (i in 1:nrow(rank_all)) {
-  df_row <- rank_all[i,]
-  filename <- paste0(file_dir, df_row$Name, ".csv")
+for (i in 1:nrow(rank_all_many)) {
+  df_row <- rank_all_many[i,]
+  filename <- paste0(file_dir_many, df_row$Name, ".csv")
   sim_df <- read_csv(filename, show_col_types = FALSE)
   stage2_knots_str <- df_row$Stage2
 
@@ -57,7 +68,7 @@ for (i in 1:nrow(rank_all)) {
       rank_id = df_row$rank_id
     )
 }
-names(sim_data_many) <- rank_all$Name
+names(sim_data_many) <- rank_all_many$Name
 ```
 ```{r}
 ori_data_many <- sim_data_many[[1]] %>%
@@ -135,7 +146,7 @@ ppp_many
 ```
 ### CI True Value
 ```{r}
-plot_CI_many <- base_plot_CI(df_plot_many2, ncol = 2, 
-                             legend_ncol=2, legend_size=15)
+plot_CI_many <- base_plot_CI(
+  df_plot_many, ncol = 2, legend_ncol=2, legend_size=15)
 plot_CI_many
 ```
