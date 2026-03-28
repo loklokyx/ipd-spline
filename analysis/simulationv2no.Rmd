@@ -23,16 +23,18 @@ study_cols <- grep("^Study", names(simul_settings_no), value = TRUE)
 # simul_settings_no <- simul_settings_no[!apply(simul_settings_no, 1, is_same_knots), ]
 ```
 
-
 # Compare
-## Method
+## Rank Method
 ```{r}
-ggplot(simul_settings_no, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
+rank_no <- plot_rank_method(simul_settings_no)
+rank_no
 ```
+
+
 ## CI Coverage
-```{r, fig.width = 14, fig.height = 8}
-plot_CI_coverage(simul_settings_no)
-plot_CI_coverage(simul_settings_no, arrange_by = "knots")
+```{r, fig.width = 13, fig.height = 6}
+p_CI_cover_no <- plot_CI_coverage(simul_settings_no, base_knot = 5)
+p_CI_cover_no
 ```
 
 ```{r}
@@ -42,35 +44,22 @@ exclude_cols <- c("Stage2",
                   grep("^Rank_", names(simul_settings_no), value = TRUE))
 
 top_n <- 1
-worst_n <- 0
+worst_n <- 1
 rank_all_no <- make_rank_all(simul_settings_no, top_n, worst_n)
 
 rank_cols <- grep("^Rank_", names(simul_settings_no), value = TRUE)
 # Factor with desired order
 methods <- unique(rank_all_no$rank_method)
-lvls <- c(paste0("best", 1:top_n), paste0("worst", worst_n:1))
+lvls <- levels(rank_all_many$rank_id)
+
 rank_all_no %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
 ```{r}
-sim_data_no <- list()
-for (i in 1:nrow(rank_all_no)) {
-  df_row <- rank_all_no[i,]
-  filename <- paste0(file_dir_no, df_row$Name, ".csv")
-  sim_df <- read_csv(filename, show_col_types = FALSE)
-  stage2_knots_str <- df_row$Stage2
-
-  sim_data_no[[i]] <- sim_df %>%
-    mutate(
-      stage2_quantiles_str = stage2_knots_str,
-      stage2_knots = length(knots_to_numeric(stage2_knots_str)),
-      study_knots = word(df_row$Name, 1, sep = "_"),
-      rank_method = df_row$rank_method,
-      rank_id = df_row$rank_id
-    )
-}
-names(sim_data_no) <- rank_all_no$Name
+sim_data_no <- load_sim_data(rank_all_no, file_dir_no)
 ```
+
+
 ```{r}
 ori_data_no <- sim_data_no[[1]] %>%
   filter(method == "pooled") %>%
@@ -85,7 +74,7 @@ ggplot(ori_data_no) +
        color = "Study") +
   # facet_wrap(~Study, scales = "fixed") +
   theme(legend.position = "bottom",
-        legend.text   = element_text(size = 14, shapes = 19)) +
+        legend.text   = element_text(size = 14)) +
   guides(
     color = guide_legend(ncol = 6, override.aes = list(shape = 16, alpha=1))
   )
@@ -124,32 +113,21 @@ df_plot_no <- df_all_no %>%
     names_to = "metric_name",
     values_to = "metric_value"
   )
-
-ff_line_id <- unique(df_plot_no$line_id)
-ff_line_id <- ff_line_id[c(3, 1, 4, 2)]
-df_plot_no <- df_plot_no %>% mutate(line_id = factor(line_id, levels = ff_line_id))
+df_plot_no$line_id <- factor(df_plot_no$line_id, levels = unique(df_plot_no$line_id))
 ```
 ### line plot
-```{r}
+```{r, fig.width=12, fig.height=5}
 # df_plot_no2 <- df_plot_no %>% filter(rank_id == "best1")
+plots_no <- lapply(metrics, function(m) base_plot(
+  df_plot_no, m, ncol=3, legend_ncol=4))
 
-plots_no <- lapply(metrics, function(m) base_plot(df_plot_no, m, ncol=2,
-                                                  legend_ncol=2, legend_size=15))
-plots_no
-```
-#### Combine
-```{r, fig.width=18, fig.height=5}
-ppp_no <- 
-  base_plot(df_plot_no, metrics[1], ncol=2, legend_ncol=2, legend_size=15)+
-  base_plot(df_plot_no, metrics[2], ncol=2, legend_ncol=2, legend_size=15)+
-  base_plot(df_plot_no, metrics[3], ncol=2, legend_ncol=2, legend_size=15)
-ppp_no
+plots_no[[1]]
+plots_no[[2]]
+plots_no[[3]]
 ```
 
 ### CI True Value
-```{r}
-plot_CI_no <- base_plot_CI(df_plot_no, ncol = 2,
-                           legend_ncol=2, legend_size=15)
+```{r, fig.width=12, fig.height=5}
+plot_CI_no <- base_plot_CI(df_plot_no, ncol = 3, legend_ncol=4)
 plot_CI_no
 ```
-

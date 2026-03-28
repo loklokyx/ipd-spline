@@ -15,32 +15,31 @@ source("../scripts/helpers.R")
 ```
 # Read Settings
 ```{r}
-file_dir <- "../data/extrapolate3/simulated_many/"
-simul_settings_many_e <- read_csv(paste0(file_dir, "simul_settings.csv"), show_col_types = FALSE)
-# Exclude same knots file
+file_dir_many_e <- "../data/extrapolate3/simulated_many/"
+simul_settings_many_e <- read_csv(paste0(file_dir_many_e, "simul_settings.csv"), show_col_types = FALSE)
 study_cols <- grep("^Study", names(simul_settings_many_e), value = TRUE)
-# Apply filter
-# simul_settings_many_e <- simul_settings_many_e[!apply(simul_settings_many_e, 1, is_same_knots), ]
 ```
 
 ```{r}
-t1 <- dnorm(30,30,1)
-t2 <- dbeta(1/2,20,20)
-b=t2/t1
-
-curve(dnorm(x,30,1), from =30-b, to = 30+b)
-curve(dbeta((x-30)/b+0.5,20,20)/b, from =30-b, to =30+b,add=T,col='red')
+# t1 <- dnorm(30,30,1)
+# t2 <- dbeta(1/2,20,20)
+# b=t2/t1
+# 
+# curve(dnorm(x,30,1), from =30-b, to = 30+b)
+# curve(dbeta((x-30)/b+0.5,20,20)/b, from =30-b, to =30+b,add=T,col='red')
 ```
 
 # Compare
-## Method
+## Rank Method
 ```{r}
-ggplot(simul_settings_many_e, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
+rank_many_e <- plot_rank_method(simul_settings_many_e)
+rank_many_e
 ```
+
 ## CI Coverage
-```{r, fig.width = 14, fig.height = 8}
-plot_CI_coverage(simul_settings_many_e)
-plot_CI_coverage(simul_settings_many_e, arrange_by = "knots")
+```{r, fig.width = 13, fig.height = 6}
+p_CI_cover_many_e <- plot_CI_coverage(simul_settings_many_e, base_knot = 5)
+p_CI_cover_many_e
 ```
 
 ```{r}
@@ -50,35 +49,23 @@ exclude_cols <- c("Stage2",
                   grep("^Rank_", names(simul_settings_many_e), value = TRUE))
 
 top_n <- 1
-worst_n <- 0
+worst_n <- 1
 rank_all_many_e <- make_rank_all(simul_settings_many_e, top_n, worst_n)
 
 rank_cols <- grep("^Rank_", names(simul_settings_many_e), value = TRUE)
 # Factor with desired order
 methods <- unique(rank_all_many_e$rank_method)
-lvls <- c(paste0("best", 1:top_n), paste0("worst", worst_n:1))
+lvls <- levels(rank_all_many$rank_id)
+
 rank_all_many_e %>% dplyr::select(-all_of(exclude_cols))
 ```
+
 # Read Simulation Data
 ```{r}
-sim_data_many_e <- list()
-for (i in 1:nrow(rank_all_many_e)) {
-  df_row <- rank_all_many_e[i,]
-  filename <- paste0(file_dir, df_row$Name, ".csv")
-  sim_df <- read_csv(filename, show_col_types = FALSE)
-  stage2_knots_str <- df_row$Stage2
-
-  sim_data_many_e[[i]] <- sim_df %>%
-    mutate(
-      stage2_quantiles_str = stage2_knots_str,
-      stage2_knots = length(knots_to_numeric(stage2_knots_str)),
-      study_knots = word(df_row$Name, 1, sep = "_"),
-      rank_method = df_row$rank_method,
-      rank_id = df_row$rank_id
-    )
-}
-names(sim_data_many_e) <- rank_all_many_e$Name
+sim_data_many_e <- load_sim_data(rank_all_many_e, file_dir_many_e)
 ```
+
+
 ```{r}
 ggplot(sim_data_many_e[[1]]) +
   geom_point(aes(x = Age, y = Y, color = as.factor(Study)), shape=1) +
@@ -104,8 +91,8 @@ metrics <- c("mse", "variance", "bias")
 summary_all_many_e <- set_summary(all_metrics_many_e, metrics = metrics)
 summary_all_many_e
 ```
+
 # Bias, Variance, MSE plot
-## n=1800
 ```{r, fig.height=10, fig.width=7}
 df_all_many_e <- bind_rows(all_metrics_many_e)
 df_plot_many_e <- df_all_many_e %>%
@@ -122,24 +109,20 @@ df_plot_many_e <- df_all_many_e %>%
     names_to = "metric_name",
     values_to = "metric_value"
   )
+df_plot_many_e$line_id <- factor(df_plot_many_e$line_id, levels = unique(df_plot_many_e$line_id))
 ```
 ### line plot
-```{r, fig.width=10}
-plots_many_e <- lapply(metrics, function(m) base_plot(df_plot_many_e, m, 
-                                                    ncol=2, legend_ncol=4))
-```
+```{r, fig.width=12, fig.height=5}
+plots_many_e <- lapply(metrics, function(m) base_plot(
+  df_plot_many_e, m, ncol=3, legend_ncol=4))
 
-```{r, fig.width=14}
-plots_many_e <- lapply(metrics, function(m) base_plot(df_plot_many_e, m, 
-                                                    ncol=1, legend_ncol=2))
-wrap_plots(
-  list(plots_many_e[[1]], plots_many_e[[2]], plots_many_e[[3]]),
-  ncol=3,
-)
+plots_many_e[[1]]
+plots_many_e[[2]]
+plots_many_e[[3]]
 ```
 
 ### CI True Value
-```{r, fig.width=12}
-plot_CI_many_e <- base_plot_CI(df_plot_many_e, ncol = 2, legend_ncol=4)
+```{r, fig.width=12, fig.height=5}
+plot_CI_many_e <- base_plot_CI(df_plot_many_e, ncol = 3, legend_ncol=4)
 plot_CI_many_e
 ```

@@ -91,15 +91,37 @@ calculate_metrics <- function(df, level = 0.95) {
 
 # Function to check if Stage2 == all Study columns
 is_same_knots <- function(row) {
-  all(sapply(study_cols, function(c){
-    length(knots_to_numeric(row[[c]])) == length(knots_to_numeric(row[["Stage2"]]))
-  }))
-}
-is_same_knots <- function(row) {
   study_lengths <- sapply(study_cols, function(c) {
     length(knots_to_numeric(row[[c]]))
   })
   length(unique(study_lengths)) == 1   # TRUE if all equal, FALSE if not
+}
+
+load_sim_data <- function(rank_df, file_dir) {
+  sim_data <- vector("list", nrow(rank_df))
+  file_cache <- list()
+  
+  for (i in seq_len(nrow(rank_df))) {
+    df_row <- rank_df[i, ]
+    key <- df_row$Name
+    # Read file only once and cache
+    if (!key %in% names(file_cache)) {
+      filename <- paste0(file_dir, key, ".csv")
+      file_cache[[key]] <- read_csv(filename, show_col_types = FALSE)
+    }
+    sim_df <- file_cache[[key]]
+    # Add row specific columns
+    knots_level <- unique(word(levels(df_row$Name), 1, sep = "_"))
+    sim_df$stage2_quantiles_str <- df_row$Stage2
+    sim_df$stage2_knots <- length(knots_to_numeric(df_row$Stage2))
+    sim_df$study_knots <- stringr::word(df_row$Name, 1, sep = "_")
+    sim_df$rank_method <- df_row$rank_method
+    sim_df$rank_id <- df_row$rank_id
+    sim_df$study_knots <- factor(sim_df$study_knots, levels = knots_level)
+    sim_data[[i]] <- sim_df
+  }
+  names(sim_data) <- rank_df$Name
+  return(sim_data)
 }
 
 library(stringr)
@@ -137,27 +159,66 @@ arrange_knots <- function(df, base_knot = NULL) {
       match(df_ordered$Name, df$Name),
       as.character(base_knot)
     ]
-    df_ordered$group_base <- paste0(counts, " of k = ", base_knot) 
+    df_ordered$group_base <- paste0(counts, " of k=", base_knot) 
   }
   return(df_ordered)
 }
 
-plot_CI_coverage <- function(df, arrange_by = "name", base_knot = NULL,
-                             stat_pos = NULL){
-  library(ggplot2)
-  library(dplyr)
+plot_rank_method <- function(settings_df, base_knot = NULL, reduce = TRUE){
+  df <- settings_df
   
+  if(!is.null(base_knot)) {
+    # arrange by knots and keep Name factor order
+    df <- arrange_knots(df, base_knot)
+    if(reduce) df$Name <- str_split_fixed(df$Name, "_", 2)[,1]
+    df$Name <- factor(df$Name, levels = df$Name)
+    
+    # Identify the first appearance of each group_base (except the first one)
+    group_levels <- unique(df$group_base)
+    vlines <- sapply(group_levels[-1], function(g) {
+      which(df$group_base == g)[1] - 0.5  # shift to line between groups
+    })
+    
+    p <- ggplot(df) + 
+      # vertical lines for group boundaries
+      geom_vline(xintercept = vlines, linetype = "dotted", color = "grey50", linewidth = 1) +
+      geom_point(aes(x = Name, y = Rank_pooled, fill = factor(group_base), color = "pooled"),
+                 shape = 21, size = 3, stroke = .7) +
+      geom_point(aes(x = Name, y = Rank_meta, fill = factor(group_base), color = "meta"),
+                 shape = 21, size = 3, stroke = .7) +
+      scale_color_manual(values = c("pooled" = "red", "meta" = "blue"), name = "Type") +
+      labs(x = "Name", y = "Rank", fill = "Stage 1") +
+      theme(axis.text.x = element_text(angle = 90))
+    
+  } else {
+    # original numeric rank plot
+    p <- ggplot(df, aes(x = Rank_pooled, y = Rank_meta)) +
+      geom_point() +
+      labs(x = "Rank pooled", y = "Rank meta")
+  }
+  
+  p + scale_y_reverse()
+}
+
+plot_CI_coverage <- function(settings_df, arrange_by = "name", base_knot = NULL,
+                             stat_pos = NULL, reduce = TRUE){
+  df <- settings_df
   mean_pooled <- mean(df$Coverage_pooled, na.rm = TRUE)
   range_pooled <- range(df$Coverage_pooled, na.rm = TRUE)
   mean_meta <- mean(df$Coverage_meta, na.rm = TRUE)
   range_meta <- range(df$Coverage_meta, na.rm = TRUE)
   
   arrange_by <- tolower(arrange_by)
+  if(arrange_by == "knots" || !is.null(base_knot)) {
+    df <- arrange_knots(df, base_knot)
+    arrange_by = "knots"
+  }
+  
   if(arrange_by == "name") {
     df <- df %>% arrange(Name)
-  } else if(arrange_by == "knots") {
-    df <- arrange_knots(df, base_knot)
   }
+  
+  if(reduce) df$Name <- str_split_fixed(df$Name, "_", 2)[,1]
   
   df$Name <- factor(df$Name, levels = df$Name)
   n <- length(df$Name)
@@ -172,12 +233,21 @@ plot_CI_coverage <- function(df, arrange_by = "name", base_knot = NULL,
   
   # add grouping only if requested
   if(arrange_by == "knots" && !is.null(base_knot)) {
+    # Identify the first appearance of each group_base (except the first one)
+    group_levels <- unique(df$group_base)
+    vlines <- sapply(group_levels[-1], function(g) {
+      which(df$group_base == g)[1] - 0.5  # shift to line between groups
+    })
+    
     p <- p + 
+      # vertical lines for group boundaries
+      geom_vline(xintercept = vlines, linetype = "dotted", color = "grey50", linewidth = 1) +
       geom_point(aes(x = Name, y = Coverage_pooled, fill = factor(group_base)),
                  shape = 21, size = 2.5, color = "black") +
       geom_point(aes(x = Name, y = Coverage_meta, fill = factor(group_base)),
                  shape = 21, size = 2.5, color = "black") +
-      labs(fill = "Stage 1 Knot Counts")
+      labs(fill = "Stage 1")
+      # labs(fill = "Stage 1 Knot Counts")
   }
   
   if(!is.null(stat_pos)) {
@@ -200,16 +270,12 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE,
                       legend = TRUE, legend_ncol=1, legend_size=14) {
   quan <- make_quantiles(df$Age, df$stage2_knots[1])
   df_sub <- df %>% filter(metric_name == !!metric_name)
-  
+
   p <- ggplot(df_sub , aes(x = Age, y = metric_value, color = line_id)) +
     geom_line(linewidth = 1) +
     geom_vline(xintercept = quan, linetype = "dashed", color = "grey40") +
     facet_wrap(~rank_id, ncol = ncol, scales = if (fix_y) "fixed" else "free_y") +
-    labs(
-      x = "Age",
-      y = metric_name,
-      color = "Method"
-    ) +
+    labs(x = "Age", y = metric_name, color = "Method") +
     theme(strip.background = element_rect(fill = "white"))
   
   if (legend) {
@@ -222,6 +288,8 @@ base_plot <- function(df, metric_name, ncol, fix_y = TRUE,
   } else {
     p <- p + theme(legend.position = "none")
   }
+  
+  p
 }
 
 base_plot_CI <- function(df, ncol, fix_y = TRUE, title = "Predicted Values CI",
@@ -302,53 +370,67 @@ set_summary <- function(df_list,
   return(full_df)
 }
 
-make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1){
+make_rank_all <- function(simul_settings, top_n = 1, worst_n = 1,
+                          include_same_knot = TRUE) {
   # Identify ranking columns
   rank_cols <- grep("^Rank_", names(simul_settings), value = TRUE)
-  
+  methods <- sub("^Rank_", "", rank_cols)
+  knots_level <- c()
   rank_all <- lapply(rank_cols, function(col) {
+    # ----- Best n -----
+    top_rows <- simul_settings %>%
+      arrange(.data[[col]]) %>%
+      slice_head(n = top_n)
     
-    # ----- TOP -----
-    if (top_n > 0) {
-      best <- simul_settings %>%
-        arrange(.data[[col]]) %>%
-        slice_head(n = top_n) %>%
-        mutate(
-          rank_method = sub("^Rank_", "", col),
-          rank_id = paste0("best", seq_len(top_n))
-        )
-    } else {
-      best <- NULL
-    }
+    # ----- Worst n -----
+    worst_rows <- simul_settings %>%
+      arrange(.data[[col]]) %>%
+      slice_tail(n = worst_n)
     
-    # ----- WORST -----
-    if (worst_n > 0) {
-      worst <- simul_settings %>%
-        arrange(.data[[col]]) %>%
-        slice_tail(n = worst_n) %>%
-        mutate(
-          rank_method = sub("^Rank_", "", col),
-          rank_id = paste0("worst", worst_n:1)
-        )
-    } else {
-      worst <- NULL
-    }
-    
-    bind_rows(best, worst)
+    # Combine top and worst, remove duplicates
+    combined <- bind_rows(top_rows, worst_rows)
+    combined <- combined[!duplicated(combined), ]
+
+    # ----- Assign rank_id using unique numeric ranks -----
+    combined <- combined %>%
+      mutate(
+        rank_method = sub("^Rank_", "", col),
+        rank_id = paste0("best", .data[[col]])
+      )
+    knots_level <<- c(knots_level, combined$Name)
+    combined
   }) %>%
     bind_rows()
   
+  # ----- Include same knots -----
+  if (include_same_knot) {
+    same_knots_rows <- simul_settings[apply(simul_settings, 1, is_same_knots), ]
+    same_knots_rows$rank_id <- "same_knot"
+    same_knots_rows <- same_knots_rows %>% crossing(rank_method = methods)
+    rank_all <- bind_rows(rank_all, same_knots_rows)
+    knots_level <- c(knots_level, same_knots_rows$Name)
+  }
+
   # ----- Factor levels -----
+  df_n <- nrow(simul_settings)
+  worst_seq <- (df_n-worst_n+1):df_n
   lvls <- c(
     if (top_n > 0) paste0("best", seq_len(top_n)),
-    if (worst_n > 0) paste0("worst", worst_n:1)
+    if (worst_n > 0) paste0("best", worst_seq),
+    if (include_same_knot) "same_knot"
   )
   
-  if (length(lvls) > 0 && nrow(rank_all) > 0) {
-    rank_all <- rank_all %>%
-      mutate(rank_id = factor(rank_id, levels = lvls))
+  rank_all <- rank_all %>% arrange(rank_id)
+  knots_level <- unique(rank_all$Name)
+  if (nrow(rank_all) > 0) {
+    if (length(lvls) > 0){
+      rank_all <- rank_all %>% mutate(rank_id = factor(rank_id, levels = lvls))
+    }
+    if (length(knots_level) > 0){
+      rank_all <- rank_all %>% mutate(Name = factor(Name, levels = knots_level))
+    }
   }
-  
+
   return(rank_all)
 }
 

@@ -1,0 +1,411 @@
+---
+title: "Coverage"
+author: "Lok Yiu Xuan [23171563]"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(splines)
+library(rms)
+library(lme4)
+library(ggplot2)
+library(patchwork)
+library(future.apply)
+library(data.table)
+plan(multisession)
+source("../scripts/helpers.R")
+```
+
+# Groups
+## Type (simul,i,e)
+## Method (pool,m)
+## Knot (4,5)
+## Overlap (no,s,m)
+
+# Construct File Directory
+```{r}
+methods <- list(pool = "pooled", meta = "meta")
+types <- list(simul = "simulate", inter = "interpolate", extra = "extrapolate")
+overlaps <- list(no = "no", some = "some", many = "many")
+knots <- list(four = "all 4", five = "all 5")
+
+base_t <- "_coverage"
+base_o <- "simulated_"
+base_dir <- "../data"
+
+all_files <- list()
+
+to_upper <- function(x, pos = 1) {
+ paste0(toupper(substr(x, 1, pos)), substr(x, 2, nchar(x)))
+}
+
+for (t in types) {
+  for (o in overlaps) {
+    dir_path <- file.path(base_dir, 
+                          paste0(t, base_t), 
+                          paste0(base_o, o))
+    
+    files <- list.files(
+      dir_path,
+      pattern = "^coverage_.*\\.csv$",
+      full.names = TRUE
+    )
+    
+    for (f in files) {
+      kk <- stringr::str_extract(basename(f), "(?<=study)\\d")
+      list_name <- paste0(t, "_", o, "_", kk)
+      all_files[[list_name]] <- list(
+        file = f,
+        type = to_upper(t),
+        overlap = paste0(to_upper(o)),
+        knot = paste0("All ", to_upper(kk))
+      )
+    }
+  }
+}
+```
+
+# Read All Files
+
+```{r}
+true_func <- function(x) 10 + 5 * (1 + exp((.15 * (x - 60))))^(-1)
+up_list <- function(names) lapply(names, to_upper)
+f_lvls <- function(x) unlist(x, use.names = FALSE)
+
+methods  <- up_list(methods)
+types    <- up_list(types)
+overlaps <- up_list(overlaps)
+knots    <- up_list(knots)
+
+cache_file <- paste0("all", base_t, ".dat")
+
+if (file.exists(cache_file)) {
+  message("Reading cached coverage data...")
+  coverage_all <- readRDS(cache_file)
+
+} else {
+  message("Building coverage data (slow)...")
+
+  coverage_all <- future_lapply(all_files, function(info) {
+    dt <- data.table::fread(info$file)
+    dt[, `:=`(
+      method  = to_upper(method),
+      type    = info$type,
+      overlap = info$overlap,
+      knot    = info$knot
+    )]
+    dt
+  })
+
+  coverage_all <- data.table::rbindlist(coverage_all)
+  coverage_all[, `:=`(
+    method  = factor(method,  levels = f_lvls(methods)),
+    type    = factor(type,    levels = f_lvls(types)),
+    overlap = factor(overlap, levels = f_lvls(overlaps)),
+    knot    = factor(knot,    levels = f_lvls(knots)),
+    Study   = factor(Study),
+    sim     = factor(sim),
+    covered = (true_func(Age) >= lower & true_func(Age) <= upper),
+    width   = upper - lower
+  )]
+
+  saveRDS(coverage_all, cache_file)
+  message("Saved cache to ", cache_file)
+}
+```
+
+# Helper Functions
+```{r}
+get_facet_vars <- function(facet_formula) {
+  if (is.null(facet_formula)) return(NULL)
+  facet_clean <- gsub("\\s+", "", facet_formula)
+  sides <- strsplit(facet_clean, "~")[[1]]
+  facet_vars <- unlist(strsplit(sides, "\\+"))
+  facet_vars <- facet_vars[facet_vars != ""]
+  return(facet_vars)
+}
+
+nominal_layers <- list(
+  geom_hline(yintercept = 0.95,  linetype = "dashed", colour = "red", linewidth = 0.6),
+  geom_hline(yintercept = 0.925, linetype = "dashed", colour = "grey65", linewidth = 0.6),
+  geom_hline(yintercept = 0.975, linetype = "dashed", colour = "grey65", linewidth = 0.6)
+)
+
+theme_cov <- function() {
+  theme_minimal(base_size = 11) +
+    theme(
+      strip.background  = element_rect(fill = "grey93", colour = NA),
+      strip.text        = element_text(
+        face = "bold", 
+        size = 9,            # smaller font
+        margin = margin(t = 1.5, r = 1, b = 2, l = 1) # reduce padding
+      ),
+      panel.grid.minor  = element_blank(),
+      legend.position   = "bottom",
+      plot.title        = element_text(face = "bold", size = 13),
+      plot.subtitle     = element_text(size = 11, colour = "grey40"),
+      axis.title        = element_text(size = 10),
+      plot.caption      = element_text(size = 9, colour = "grey50")
+    )
+}
+
+format_p <- function(p, ...) {
+  args <- list(...)
+  p <- p + theme_cov()
+  if (!is.null(args$facet)) p <- p + facet_wrap(as.formula(args$facet))
+  if (!is.null(args$title)) p <- p + labs(title = args$title)
+  if (!is.null(args$subtitle)) p <- p + labs(subtitle = args$subtitle)
+  if (!is.null(args$legend)) p <- p + theme(legend.position = args$legend)
+  if (!is.null(args$ylim)) p <- p + ylim(args$ylim)
+  if (is.null(args$CI_layer)) p <- p + nominal_layers
+  if (!is.null(args$xlim) && isFALSE(args$xlim)) p <- p + theme(axis.text.x = element_blank())
+  p
+}
+```
+
+# Plotting Functions
+
+## Boxplots of Coverage by Knot
+```{r}
+plot_coverage_box <- function(dt, x_var, ...) {
+  args <- list(...)
+  facet <- args$facet
+  
+  by_vars <- c("sim", x_var, get_facet_vars(facet))
+  sim_cov <- dt[, .(coverage = mean(covered)), by = by_vars]
+  
+  p <- ggplot(sim_cov, aes(
+      x = .data[[x_var]], 
+      y = coverage, 
+      fill = .data[[x_var]])
+    ) + geom_boxplot() +
+    coord_flip()
+  
+  format_p(p, facet = facet, ...)
+}
+
+for (c in overlaps) {
+  print(plot_coverage_box(
+    coverage_all[overlap==c & type!=types$extra],
+    x_var = "method", 
+    facet = "~knot+type",
+    title = c, legend = "bottom"
+  ))
+}
+```
+
+## Coverage vs Age Plots
+```{r}
+plot_coverage_age <- function(dt, color_var, ...) {
+  args <- list(...)
+  facet <- args$facet
+  
+  by_vars <- c("Age", color_var, get_facet_vars(facet))
+  age_cov <- dt[, .(coverage = mean(covered)), by = by_vars]
+  
+  p <- ggplot(age_cov, aes(x = Age, y = coverage, color = .data[[color_var]])) +
+    geom_line(size = 1)
+
+  format_p(p, facet = facet, ...)
+}
+
+for (c in overlaps) {
+  print(plot_coverage_age(
+    coverage_all[overlap==c],
+    color_var = "method", 
+    facet = "~knot+type",
+    title = c, legend = "bottom"
+  ))
+}
+```
+
+
+## Age Distribution
+```{r}
+age_dt <- coverage_all[overlap==overlaps$no & type==types$inter & knot == knots$four]
+by_vars <- c("Age", "method", "knot","type")
+age_cov <- age_dt[, .(coverage = mean(covered)), by = by_vars]
+age_sub <- age_cov[Age >= 60 & Age <= 70]
+min_row <- age_sub[which.min(coverage)]
+min_row
+```
+
+
+```{r, message=FALSE}
+plot_age_pointwise <- function(dt, age_val, ...) {
+  args <- list(...)
+  facet <- args$facet
+
+  # Pick the first Age per Study, method, sim, and facet
+  by_vars <- c("method", "sim", get_facet_vars(facet))
+  # age_dt <- dt[, .SD[which(Age == age_val)], by = by_vars]
+  age_dt <- dt[, .SD[which.min(abs(Age - age_val))], by = by_vars]
+
+  # Add true Y at this Age
+  age_dt[, Y_true := true_func(Age)]
+  actual_age <- age_dt[1, Age]
+  # Plot each simulation as a point with CI error bars
+  p <- ggplot(age_dt, aes(x = factor(sim), y = Y, color = method)) +
+    geom_errorbar(aes(ymin = lower, ymax = upper), width = 0.2, alpha = 0.5) +
+    geom_point(color="black", alpha=0.7, shape=3) +
+    geom_hline(aes(yintercept = Y_true), color = "red", linetype = "dashed", size = 1) +
+    xlab(paste0("Simulation (n = ",uniqueN(age_dt$sim),")")) +
+    labs(subtitle = paste0("Age = ", actual_age))
+
+  format_p(p, ...)
+}
+
+age_values <- c(36.54159, 65.53302)
+ppp <- lapply(age_values, function(age) {
+  lapply(knots, function(k) {
+    lapply(overlaps, function(o) {
+      plot_age_pointwise(
+        coverage_all[overlap==o & knot==k & type != types$extra],
+        age_val = age,
+        facet = "type~method",
+        title = paste0("Plot of ", k, " ", o),
+        xlim=F, CI_layer=F
+      )
+    })
+  })
+})
+```
+
+```{r, fig.width=10, fig.height=8}
+(ppp[[1]]$four[[1]] + theme(legend.position="none") + 
+ ppp[[1]]$four[[2]] + theme(legend.position="none") + 
+ ppp[[1]]$four[[3]] + theme(legend.position="none")
+) / 
+(ppp[[1]]$five[[1]] + theme(legend.position="none") +
+ ppp[[1]]$five[[2]] +
+ ppp[[1]]$five[[3]] + theme(legend.position="none")
+)
+
+(ppp[[2]]$four[[1]] + theme(legend.position="none") + 
+ ppp[[2]]$four[[2]] + theme(legend.position="none") + 
+ ppp[[2]]$four[[3]] + theme(legend.position="none")
+) / 
+(ppp[[2]]$five[[1]] + theme(legend.position="none") +
+ ppp[[2]]$five[[2]] +
+ ppp[[2]]$five[[3]] + theme(legend.position="none")
+) 
+```
+
+## Coverage by Study
+```{r}
+plot_coverage_by_study <- function(dt, x_var = "Study",
+                                   color_var = "method", ...) {
+  args <- list(...)
+  facet <- args$facet
+
+  by_vars <- c(x_var, color_var, get_facet_vars(facet))
+
+  smry <-   dt[, .(
+    coverage   = mean(covered),
+    n          = .N,
+    se         = sqrt(mean(covered) * (1 - mean(covered)) / .N),
+    mean_width = mean(width)
+  ), by = by_vars][, `:=`(
+    ci_lo = coverage - 1.96 * se,
+    ci_hi = coverage + 1.96 * se
+  )]
+
+  
+  p <- ggplot(smry, aes(
+    x = .data[[x_var]], y = coverage,
+    colour = .data[[color_var]],
+    shape  = .data[[color_var]]
+  )) +
+    geom_errorbar(aes(ymin = ci_lo, ymax = ci_hi),
+                  width = 0.3, position = position_dodge(0.55), 
+                  linewidth = 0.5) +
+    geom_point(size = 2.5, position = position_dodge(0.55))
+
+  format_p(p, facet = facet, ...)
+}
+
+for (c in overlaps) {
+  print(plot_coverage_by_study(
+    coverage_all[overlap==c],
+    x_var = "Study",
+    color_var = "method", 
+    facet = "~knot+type",
+    title = c, legend = "bottom"
+  ))
+}
+```
+
+## Coverage Heatmap (All Conditions)
+
+```{r}
+plot_heatmap <- function(dt, ...) {
+  args <- list(...)
+  facet <- args$facet
+  
+  by_vars <- c("overlap", "type", get_facet_vars(facet))
+  smry <- dt[, .(coverage = mean(covered)), by = by_vars]
+  
+  p <- ggplot(smry, aes(x = type, y = overlap, fill = coverage)) +
+    geom_tile(colour = "white", linewidth = 0.8) +
+    geom_text(aes(label = scales::percent(coverage, accuracy = 0.1)),
+              size = 3, fontface = "bold") +
+    scale_fill_gradient(
+      low      = "#d73027",
+      high     = "#4575b4",
+      limits = c(0.80, 1.00),
+      labels   = scales::percent_format(accuracy = 1)
+    ) + theme_cov()
+  
+  format_p(p, ...)
+}
+
+print(plot_heatmap(
+  coverage_all,
+  facet = "~knot+method",
+  legend = "bottom", CI_layer=F
+))
+```
+
+### Difference Heatmap (Meta − Pooled)
+
+```{r}
+plot_diff_heatmap <- function(dt, ...) {
+  args <- list(...)
+  facet <- args$facet
+  
+  smry <- dt[, .(coverage = mean(covered)),
+             by = .(method, type, overlap, knot)]
+  
+  wide <- dcast(smry, type + overlap + knot ~ method, value.var = "coverage")
+  wide[, diff := Meta - Pooled]
+  diff_max <- max(abs(wide$diff), na.rm = TRUE)
+
+  p <- ggplot(wide, aes(x = type, y = overlap, fill = diff)) +
+    geom_tile(colour = "white", linewidth = 0.8) +
+    geom_text(aes(label = scales::percent(diff, accuracy = 0.01))) +
+    scale_fill_gradient2(
+      low      = "#2166ac",
+      mid      = "white",
+      high     = "#d6604d",
+      midpoint = 0,
+      limits   = c(-diff_max, diff_max),
+      labels   = scales::percent_format(accuracy = 1),
+      name     = "\u0394 coverage\n(meta − pooled)"
+    ) +
+    theme_cov()
+  
+  # dynamic formatting
+  format_p(p, facet = facet, ...)
+}
+
+print(plot_diff_heatmap(
+  coverage_all,
+  facet   = "~knot",
+  title   = "Coverage difference heatmap: meta − pooled",
+  subtitle = "Red = meta gives higher coverage; blue = pooled is better",
+  legend  = "bottom", CI_layer=F
+))
+```

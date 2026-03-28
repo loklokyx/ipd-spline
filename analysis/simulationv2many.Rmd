@@ -24,14 +24,15 @@ study_cols <- grep("^Study", names(simul_settings_many), value = TRUE)
 ```
 
 # Compare
-## Method
+## Rank Method
 ```{r}
-ggplot(simul_settings_many, aes(x=Rank_pooled, y=Rank_meta)) +geom_point()
+rank_many <- plot_rank_method(simul_settings_many)
+rank_many
 ```
 ## CI Coverage
-```{r, fig.width = 14, fig.height = 8}
-plot_CI_coverage(simul_settings_many)
-plot_CI_coverage(simul_settings_many, arrange_by = "knots")
+```{r, fig.width = 13, fig.height = 6}
+p_CI_cover_many <- plot_CI_coverage(simul_settings_many, base_knot = 5)
+p_CI_cover_many
 ```
 
 ```{r}
@@ -41,35 +42,21 @@ exclude_cols <- c("Stage2",
                   grep("^Rank_", names(simul_settings_many), value = TRUE))
 
 top_n <- 1
-worst_n <- 0
+worst_n <- 1
 rank_all_many <- make_rank_all(simul_settings_many, top_n, worst_n)
 
 rank_cols <- grep("^Rank_", names(simul_settings_many), value = TRUE)
 # Factor with desired order
 methods <- unique(rank_all_many$rank_method)
-lvls <- c(paste0("best", 1:top_n), paste0("worst", worst_n:1))
+lvls <- levels(rank_all_many$rank_id)
 rank_all_many %>% dplyr::select(-all_of(exclude_cols))
 ```
 # Read Simulation Data
 ```{r}
-sim_data_many <- list()
-for (i in 1:nrow(rank_all_many)) {
-  df_row <- rank_all_many[i,]
-  filename <- paste0(file_dir_many, df_row$Name, ".csv")
-  sim_df <- read_csv(filename, show_col_types = FALSE)
-  stage2_knots_str <- df_row$Stage2
-
-  sim_data_many[[i]] <- sim_df %>%
-    mutate(
-      stage2_quantiles_str = stage2_knots_str,
-      stage2_knots = length(knots_to_numeric(stage2_knots_str)),
-      study_knots = word(df_row$Name, 1, sep = "_"),
-      rank_method = df_row$rank_method,
-      rank_id = df_row$rank_id
-    )
-}
-names(sim_data_many) <- rank_all_many$Name
+sim_data_many <- load_sim_data(rank_all_many, file_dir_many)
 ```
+
+
 ```{r}
 ori_data_many <- sim_data_many[[1]] %>%
   filter(method == "pooled") %>%
@@ -106,8 +93,7 @@ summary_all_many <- set_summary(all_metrics_many, metrics = metrics)
 summary_all_many
 ```
 # Bias, Variance, MSE plot
-## n=1800
-```{r, fig.height=10, fig.width=7}
+```{r}
 df_all_many <- bind_rows(all_metrics_many)
 df_plot_many <- df_all_many %>%
   filter(
@@ -123,30 +109,23 @@ df_plot_many <- df_all_many %>%
     names_to = "metric_name",
     values_to = "metric_value"
   )
-
-ff_line_id <- unique(df_plot_many$line_id)
-ff_line_id <- ff_line_id[c(3, 1, 4, 2)]
-df_plot_many <- df_plot_many %>% mutate(line_id = factor(line_id, levels = ff_line_id))
+df_plot_many$line_id <- factor(df_plot_many$line_id, levels = unique(df_plot_many$line_id))
+# df_plot_many2 <- df_plot_many %>% filter(rank_id == "best1")
 ```
 
 ### line plot
-```{r}
-df_plot_many2 <- df_plot_many %>% filter(rank_id == "best1")
+```{r, fig.width=12, fig.height=5}
+plots_many <- lapply(metrics, function(m) base_plot(
+  df_plot_many, m, ncol=3, legend_ncol=4))
 
-plots_many <- lapply(metrics, function(m) base_plot(df_plot_many, m, ncol=2, 
-                                                    legend_ncol=2, legend_size=15))
+# plots_many
 plots_many[[1]]
+plots_many[[2]]
+plots_many[[3]]
 ```
-```{r, fig.width=18, fig.height=5}
-ppp_many <- 
-  base_plot(df_plot_many, metrics[1], ncol=2, legend_ncol=2, legend_size=15)+
-  base_plot(df_plot_many, metrics[2], ncol=2, legend_ncol=2, legend_size=15)+
-  base_plot(df_plot_many, metrics[3], ncol=2, legend_ncol=2, legend_size=15)
-ppp_many
-```
+
 ### CI True Value
-```{r}
-plot_CI_many <- base_plot_CI(
-  df_plot_many, ncol = 2, legend_ncol=2, legend_size=15)
+```{r, fig.width=12, fig.height=5}
+plot_CI_many <- base_plot_CI(df_plot_many, ncol = 3, legend_ncol=4)
 plot_CI_many
 ```

@@ -15,18 +15,20 @@
 library(dplyr)
 
 # directories to process
+sub_dir <- c("simulated_many/", "simulated_some/", "simulated_no/")
+
 my_dirs <- c(
-  # "./data/simulated_many/",
-  # "./data/simulated_some/",
-  # "./data/simulated_no/",
-  # "./data/extrapolate/simulated_many/",
-  # "./data/extrapolate/simulated_some/",
-  "./data/interpolate/simulated_no/",
-  "./data/interpolate/simulated_many/",
-  "./data/interpolate/simulated_some/"
+  paste0("./data/", sub_dir),
+  paste0("./data/extrapolate/", sub_dir),
+  paste0("./data/extrapolate3/", sub_dir),
+  paste0("./data/interpolate/", sub_dir),
+  paste0("./data/interpolate1/", sub_dir),
+  paste0("./data/interpolate2/", sub_dir),
+  paste0("./data/interpolate3/", sub_dir),
+  paste0("./data/simulate3/", sub_dir)
 )
 
-rank_n <- 12
+rank_n <- 3
 
 for (my_dir in my_dirs) {
 
@@ -35,22 +37,28 @@ for (my_dir in my_dirs) {
   # read settings
   df <- read.csv(paste0(my_dir, "simul_settings.csv"))
 
-  # select names
+  # list files
+  all_files <- list.files(my_dir, pattern = "^study.*\\.csv$", full.names = TRUE)
+
+  same_knot_names <- tools::file_path_sans_ext(
+    basename(all_files[
+      sapply(basename(all_files), function(x) {
+        digits <- sub("^study([0-9]+)_second[0-9]+\\.csv$", "\\1", x)
+        length(unique(strsplit(digits, "")[[1]])) == 1
+      })]
+    ))
+  
   selected_names <- sort(unique(c(
     df %>% arrange(Rank_pooled) %>% slice(1:rank_n) %>% pull(Name),
     df %>% arrange(desc(Rank_pooled)) %>% slice(1:rank_n) %>% pull(Name),
     df %>% arrange(Rank_meta) %>% slice(1:rank_n) %>% pull(Name),
-    df %>% arrange(desc(Rank_meta)) %>% slice(1:rank_n) %>% pull(Name)
+    df %>% arrange(desc(Rank_meta)) %>% slice(1:rank_n) %>% pull(Name),
+    same_knot_names
   )))
-
-  # print(selected_names)
+  
+  # cat("Selected:", selected_names, "\n")
   cat("Selected:", length(selected_names), "\n")
-
-  # list files
-  all_files <- list.files(my_dir, pattern = "\\.csv$", full.names = TRUE)
-  all_files <- all_files[basename(all_files) != "simul_settings.csv"]
-  all_files <- all_files[basename(all_files) != "generated_ipd.csv"]
-
+    
   # match filenames containing selected names
   pattern <- paste(selected_names, collapse="|")
   keep <- grepl(pattern, all_files)

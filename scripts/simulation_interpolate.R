@@ -15,7 +15,7 @@ myfunc <- "10 + 5 * (1 + exp((.15 * (X1 - 60))))^(-1)"
 # Configuration - keep all settings together
 CONFIG <- list(
   data = NA,
-  n_sim = 1000,
+  n_sim = 20,
   knots_list = c(4, 5),
   overlap_conditions = c("simulated_no", "simulated_some", "simulated_many"),
   # n_sim = 10,
@@ -24,7 +24,7 @@ CONFIG <- list(
   stage2_knots_list = c(5),
   noise_sd = 2,
   weight_fun = function(se) 1/se^2,  # inverse variance weighting
-  setting_dir = "./data/interpolate3/"
+  setting_dir = "./data/interpolate_coverage1/"
 )
 
 # Stage 1: Individual study predictions
@@ -88,16 +88,16 @@ run_single_simulation <- function(sim_i, study_ids, stage1_knots_vec, stage2_kno
 }
 
 # Format and save results
-save_simulation_results <- function(all_results, filename) {
+save_simulation_results <- function(all_results, filename, is_same) {
   # Initialize method results storage
   method_names <- names(all_results[[1]]$predictions)
-  # Age_sim <- all_results[[1]]$predictions[[1]]$Age
   mse_list <- list()   # <-- initialize mse_list!
   
   # Compute weighted MSE for each method
   Y_true <- CONFIG$data$Y
   # Save simulated predictions
   row_based_df <- data.frame()
+  coverage_df <- data.frame()
   for (method in method_names) {
     sim_matrix <- do.call(cbind, lapply(
       all_results, function(res) res$predictions[[method]][['Y']]))
@@ -117,12 +117,30 @@ save_simulation_results <- function(all_results, filename) {
     coverage_matrix <- (sim_lower <= Y_true) & (Y_true <= sim_upper)
     coverage <- mean(rowMeans(coverage_matrix))
     mse_list[[paste0("Coverage_", method)]] <- coverage
+    
+    if(is_same) {
+      temp_coverage_df <- data.frame(
+        method = method,
+        Study = rep(CONFIG$data$Study, CONFIG$n_sim),
+        Age = rep(CONFIG$data$Age, CONFIG$n_sim),
+        Y = as.vector(sim_matrix),
+        sim = rep(seq_len(CONFIG$n_sim), each = nrow(sim_lower)),
+        lower = as.vector(sim_lower),
+        upper = as.vector(sim_upper)
+      )
+      
+      coverage_df <- rbind(coverage_df, temp_coverage_df)
+    }
   }
   
   # Rename sim columns
   colnames(row_based_df) <- c("method", paste0("sim_", seq_len(CONFIG$n_sim)))
-  # final_df <- cbind(CONFIG$data, Age_sim, row_based_df)
   final_df <- cbind(CONFIG$data, row_based_df)
+  
+  if(is_same) {
+    write_csv(coverage_df, 
+              paste0(CONFIG$simulated_dir, "coverage_", filename, ".csv"))
+  }
   
   write_csv(final_df, paste0(CONFIG$simulated_dir, filename, ".csv"))
   cat(filename," Saved!!!\n")
@@ -144,6 +162,8 @@ run_full_simulation <- function() {
   for (stage2_knots in CONFIG$stage2_knots_list) {
     for (combo_idx in seq_len(nrow(combinations))) {
       stage1_knots_vec <- as.numeric(combinations[combo_idx, ])
+      is_same <- length(unique(stage1_knots_vec)) == 1
+      if(!is_same) next
       
       # filename
       filename <- paste0(
@@ -157,7 +177,7 @@ run_full_simulation <- function() {
       }, future.seed = TRUE)
       
       # Save results
-      results_info <- save_simulation_results(all_results, filename)
+      results_info <- save_simulation_results(all_results, filename, is_same)
       
       # Collect settings
       prob_df <- data.frame(Name = filename)
